@@ -1,0 +1,22 @@
+# Claude Code workspace
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.uv/
+
+# Data, outputs, checkpoints
+data/
+outputs/
+*.pth
+*.ckpt
+*.onnx
+lightning_logs/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

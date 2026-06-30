@@ -1,0 +1,27 @@
+run_name: dda_v1
+dataset_repo: kshitijrajsharma/xview2-xbd
+dataset_splits:
+  - train
+  - tier3
+
+hf_ckpt_file: dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth
+img_size: 512
+use_pre: true
+modality_dropout: 0.3
+
+batch_size: 2
+eval_batch_size: 2
+num_workers: 8
+
+lr: 1.0e-3
+weight_decay: 1.0e-3
+max_epochs: 50
+early_stop_patience: 6
+loc_loss_weight: 0.3
+dmg_loss_weight: 1.0
+
+val_events:
+  - mexico-earthquake
+test_events:
+  - palu-tsunami
+  - joplin-tornado

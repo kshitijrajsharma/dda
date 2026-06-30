@@ -1,0 +1,27 @@
+# Deployment model: train on ALL events for maximum diversity (Venezuela is an unseen event,
+# so held-out measurement is done separately; here we keep every event in training).
+run_name: dda_deploy
+dataset_repo: kshitijrajsharma/xview2-xbd
+dataset_splits:
+  - train
+  - tier3
+
+hf_ckpt_file: dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth
+img_size: 512
+use_pre: true
+modality_dropout: 0.3
+augment_photometric: true
+
+batch_size: 8
+eval_batch_size: 8
+num_workers: 8
+
+lr: 1.0e-3
+weight_decay: 1.0e-3
+max_epochs: 35
+early_stop_patience: 8
+
+# Empty val_events triggers an in-distribution random split (stable, all classes present).
+val_events: []
+test_events: []
+val_frac: 0.1
