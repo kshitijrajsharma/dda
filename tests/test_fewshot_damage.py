@@ -160,7 +160,7 @@ class TestStrictHeadFreeze:
         for p in m.net.backbone.parameters():
             p.requires_grad = False
 
-        n_train, n_frozen = fd._apply_strict_head_freeze(m)
+        n_train, n_frozen = fd._apply_strict_head_freeze(m)  # ty: ignore[invalid-argument-type]
 
         for name in ("backbone", "pyramid", "decoder", "fusion"):
             module = getattr(m.net, name)
@@ -195,7 +195,7 @@ class TestStrictHeadFreeze:
         m = _FakeModel()
         for p in m.net.backbone.parameters():
             p.requires_grad = False
-        n_train, _ = fd._apply_strict_head_freeze(m)
+        n_train, _ = fd._apply_strict_head_freeze(m)  # ty: ignore[invalid-argument-type]
         assert n_train > 0
 
 

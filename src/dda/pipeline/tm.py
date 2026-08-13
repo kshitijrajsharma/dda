@@ -73,7 +73,8 @@ def union_aois(projects: list[TMProject]) -> dict[str, Any]:
             else [{"type": "Feature", "geometry": raw, "properties": {}}]
         )
         for f in raw_features:
-            props = dict(f.get("properties") or {})
+            raw_props = f.get("properties")
+            props = dict(raw_props) if isinstance(raw_props, dict) else {}
             props["tm_project_id"] = proj.project_id
             features.append({"type": "Feature", "geometry": f["geometry"], "properties": props})
     return {"type": "FeatureCollection", "features": features}

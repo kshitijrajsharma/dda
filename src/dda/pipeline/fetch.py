@@ -19,6 +19,7 @@ import geopandas as gpd
 import mercantile
 import numpy as np
 import rasterio
+import rasterio.windows
 from geomltoolkits import merge_rasters
 from PIL import Image
 from rasterio.transform import from_bounds as transform_from_bounds

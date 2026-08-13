@@ -6,7 +6,8 @@ import json
 import logging
 from pathlib import Path
 
-from dda.event_config import EventConfig
+from omegaconf import DictConfig
+
 from dda.pipeline.paths import PipelinePaths
 
 log = logging.getLogger(__name__)
@@ -15,7 +16,7 @@ STAGES = ("aoi", "prepare", "fewshot", "buildings", "label", "damage", "publish"
 
 
 def run_event(
-    cfg: EventConfig,
+    cfg: DictConfig,
     start: str | None = None,
     only: str | None = None,
     dry_run: bool = False,
@@ -42,7 +43,7 @@ def run_event(
         handler(cfg, paths)
 
 
-def _stage_aoi(cfg: EventConfig, paths: PipelinePaths) -> None:
+def _stage_aoi(cfg: DictConfig, paths: PipelinePaths) -> None:
     """Ensure `paths.aoi` exists. Fetch from TM if `tm_aoi_project` is given, else expect a file."""
     if paths.aoi.exists():
         log.info("aoi: reuse existing %s", paths.aoi)
@@ -64,7 +65,7 @@ def _stage_aoi(cfg: EventConfig, paths: PipelinePaths) -> None:
     raise RuntimeError("aoi: either `aoi:` (file path) or `tm_aoi_project:` must be set in the config")
 
 
-def _stage_prepare(cfg: EventConfig, paths: PipelinePaths) -> None:
+def _stage_prepare(cfg: DictConfig, paths: PipelinePaths) -> None:
     from dda.pipeline.coreg import coregister
     from dda.pipeline.fetch import fetch_raster
 
@@ -83,7 +84,7 @@ def _stage_prepare(cfg: EventConfig, paths: PipelinePaths) -> None:
     )
 
 
-def _stage_fewshot(cfg: EventConfig, paths: PipelinePaths) -> None:
+def _stage_fewshot(cfg: DictConfig, paths: PipelinePaths) -> None:
     if not cfg.buildings.fewshot.tm_projects:
         log.info("fewshot: no tm_projects configured, skipping")
         return
@@ -118,7 +119,7 @@ def _stage_fewshot(cfg: EventConfig, paths: PipelinePaths) -> None:
     cfg.buildings.ckpt = str(result.best_ckpt)
 
 
-def _stage_buildings(cfg: EventConfig, paths: PipelinePaths) -> None:
+def _stage_buildings(cfg: DictConfig, paths: PipelinePaths) -> None:
     if cfg.buildings.input:
         import geopandas as gpd
 
@@ -146,7 +147,7 @@ def _stage_buildings(cfg: EventConfig, paths: PipelinePaths) -> None:
     )
 
 
-def _stage_label(cfg: EventConfig, paths: PipelinePaths) -> None:
+def _stage_label(cfg: DictConfig, paths: PipelinePaths) -> None:
     if not cfg.label.enabled:
         log.info("label: disabled in config, skipping")
         return
@@ -168,7 +169,7 @@ def _stage_label(cfg: EventConfig, paths: PipelinePaths) -> None:
     )
 
 
-def _stage_damage(cfg: EventConfig, paths: PipelinePaths) -> None:
+def _stage_damage(cfg: DictConfig, paths: PipelinePaths) -> None:
     from dda.config import load_config
     from dda.infer import resolve_ckpt
     from dda.pipeline.damage import run_damage_blocked
@@ -192,7 +193,7 @@ def _stage_damage(cfg: EventConfig, paths: PipelinePaths) -> None:
     )
 
 
-def _stage_publish(cfg: EventConfig, paths: PipelinePaths) -> None:
+def _stage_publish(cfg: DictConfig, paths: PipelinePaths) -> None:
     if not cfg.publish.enabled:
         log.info("publish: disabled in config, skipping")
         return

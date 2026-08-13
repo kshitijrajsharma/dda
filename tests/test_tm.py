@@ -1,5 +1,6 @@
 """Tests for `dda.pipeline.tm`: TM v2 project fetch + AOI union."""
 
+import email.message
 import io
 import json
 import urllib.error
@@ -101,8 +102,8 @@ def test_fetch_tm_project_http_error_wrapped(monkeypatch):
         url="https://example",
         code=404,
         msg="Not Found",
-        hdrs=None,
-        fp=None,  # ty: ignore[invalid-argument-type]
+        hdrs=email.message.Message(),
+        fp=None,
     )
     _patch_urlopen(monkeypatch, err)
     with pytest.raises(RuntimeError, match="HTTP 404"):

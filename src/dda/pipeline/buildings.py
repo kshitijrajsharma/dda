@@ -149,8 +149,8 @@ def run_fair_buildings(  # noqa: PLR0915  # single-purpose macroblock loop, spli
             mp, _, dist, tr, crs = sliding_window_predict(
                 model,
                 str(block_tmp),
-                window=_INFER["window"],
-                stride=_INFER["stride"],
+                window=int(_INFER["window"]),
+                stride=int(_INFER["stride"]),
                 mean=HOT_MEAN,
                 std=HOT_STD,
                 device=cfg.device,
@@ -159,8 +159,8 @@ def run_fair_buildings(  # noqa: PLR0915  # single-purpose macroblock loop, spli
                 mp,
                 dist,
                 mask_threshold=_INFER["threshold"],
-                seed_min_distance=_INFER["seed_min_distance"],
-                large_blob_area_px=_INFER["large_blob_area_px"],
+                seed_min_distance=int(_INFER["seed_min_distance"]),
+                large_blob_area_px=int(_INFER["large_blob_area_px"]),
                 h_maxima_depth=_INFER["h_maxima_depth"],
             )
             gdf = vectorize(

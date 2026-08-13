@@ -181,7 +181,7 @@ class _ChipDataset(Dataset):
     def __len__(self) -> int:
         return len(self.items)
 
-    def __getitem__(self, i: int) -> dict[str, torch.Tensor]:
+    def __getitem__(self, i: int) -> dict[str, torch.Tensor]:  # ty: ignore[invalid-method-override]
         it = self.items[i]
         post_t = ((torch.from_numpy(it["post"]).float() / 255.0) - self._MEAN) / self._STD
         pre_t = ((torch.from_numpy(it["pre"]).float() / 255.0) - self._MEAN) / self._STD

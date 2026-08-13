@@ -48,5 +48,5 @@ def enable_offline_torch_hub_fallback() -> None:
             )
             return owner, name, ref
 
-    hub._parse_repo_info = patched
-    hub._dda_offline_fallback_applied = True
+    hub._parse_repo_info = patched  # ty: ignore[invalid-assignment]
+    hub._dda_offline_fallback_applied = True  # ty: ignore[unresolved-attribute]
