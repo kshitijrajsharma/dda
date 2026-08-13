@@ -141,19 +141,13 @@ the aligned versions for QGIS inspection; default deletes them once the aligned 
 ### 6. Label in region (external)
 
 Labeling is deliberately out of scope for this repo. The output of `dda buildings`,
-`outputs/<area>/buildings.geojson`, is a plain GeoJSON of building polygons and drops into
-any labeling tool that reads GeoJSON:
-
-- [`map-with-fAIr`](https://github.com/hotosm/map-with-fAIr): the HOT tool for reviewing and
-  editing fAIr detections on a slippy map, in the browser.
-- QGIS: open `buildings.geojson`, add a `damage` string column, use the attribute form or
-  the Field Calculator to assign classes per feature.
-- Any other GeoJSON editor.
+`outputs/<area>/buildings.geojson`, is a plain GeoJSON of building polygons and can be
+labeled in any tool that reads and writes GeoJSON.
 
 Add a `damage` column with values in `{no-damage, minor-damage, major-damage, destroyed}`
-(or integer codes `1..4`). Anything you leave unlabeled will simply be ignored by the
-fine-tune. Un-classified buildings, if you want to be explicit, can carry code `5` or
-`"un-classified"`, which the loss ignores.
+(or integer codes `1..4`). Anything you leave unlabeled is ignored by the fine-tune.
+Un-classified buildings, if you want to be explicit, can carry code `5` or
+`"un-classified"`, which the loss also ignores.
 
 ### 7. Fine-tune in region
 

@@ -107,10 +107,10 @@ The base is `python:3.13-slim-bookworm`; torch bundles its own CUDA runtime. The
 runtime. Volumes carry the outputs directory and the HF, torch caches so downloaded
 checkpoints persist between runs.
 
-For in-region fine-tuning, label a copy of `outputs/<area>/buildings.geojson` in any tool
-(map-with-fAIr, QGIS, whatever) by adding a `damage` column with values in
-`{no-damage, minor-damage, major-damage, destroyed}` (or `1..4`), then feed it to
-`dda fewshot damage --labels <that.geojson>`.
+For in-region fine-tuning, label a copy of `outputs/<area>/buildings.geojson` in whatever
+GeoJSON-aware tool you prefer by adding a `damage` column with values in
+`{no-damage, minor-damage, major-damage, destroyed}` (or integer codes `1..4`), then feed
+it to `dda fewshot damage --labels <that.geojson>`.
 
 ### Stack
 
