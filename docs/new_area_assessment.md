@@ -94,11 +94,18 @@ Full end-to-end:
 dda run --config conf/colombia_eq.yaml
 ```
 
-Stage order: `aoi, prepare, fewshot, buildings, label, damage, publish`. Skip forward
-with `-s <stage>` when earlier work is already done:
+Stage order: `aoi, prepare, fewshot, buildings, label, damage, publish`.
+
+To resume from a specific stage through the end (earlier stages assumed done):
 
 ```bash
 dda run --config conf/colombia_eq.yaml -s damage
+```
+
+To run one stage in isolation (useful when stepping through the pipeline for the first time):
+
+```bash
+dda run --config conf/colombia_eq.yaml --only prepare
 ```
 
 Override any field from the CLI without touching the YAML (OmegaConf dotlist syntax):
@@ -205,7 +212,7 @@ damage:
 ```
 
 ```bash
-dda run --config conf/colombia_eq.yaml -s damage
+dda run --config conf/colombia_eq.yaml --only damage
 ```
 
 ### 8. Verify

@@ -173,6 +173,14 @@ def _stage_damage(cfg: EventConfig, paths: PipelinePaths) -> None:
     from dda.infer import resolve_ckpt
     from dda.pipeline.damage import run_damage_blocked
 
+    if cfg.label.enabled and not cfg.damage.ckpt:
+        log.info(
+            "damage: label.enabled=true and damage.ckpt is unset; skipping. "
+            "Finish the labeling loop (docker compose up, label in LS, dda label-import, "
+            "dda fewshot damage), set damage.ckpt to the tuned checkpoint, then re-run --only damage."
+        )
+        return
+
     train_cfg = load_config(None)
     run_damage_blocked(
         cfg=train_cfg,

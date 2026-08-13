@@ -52,10 +52,10 @@ Short version, one YAML declares the event and one command runs it:
 dda run --config conf/colombia_eq.yaml
 ```
 
-Stage order: `aoi, prepare, fewshot, buildings, label, damage, publish`. Skip forward
-with `-s <stage>`. Override any field from the CLI with OmegaConf dotlist syntax
-(`buildings.fewshot.hpo_trials=4`). Outputs land under `outputs/<area>/`; the final
-deliverable is `outputs/<area>/damage.geojson`.
+Stage order: `aoi, prepare, fewshot, buildings, label, damage, publish`. Resume from
+a stage with `-s <stage>` or run one stage in isolation with `--only <stage>`. Override
+any field from the CLI with OmegaConf dotlist syntax (`buildings.fewshot.hpo_trials=4`).
+Outputs land under `outputs/<area>/`; the final deliverable is `outputs/<area>/damage.geojson`.
 
 The per-stage commands (`dda prepare`, `dda buildings`, `dda damage`, `dda publish`) are
 available for one-off experiments and mid-pipeline resumes.
