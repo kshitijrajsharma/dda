@@ -12,7 +12,7 @@ from dda.pipeline.paths import PipelinePaths
 
 log = logging.getLogger(__name__)
 
-STAGES = ("aoi", "prepare", "fewshot", "buildings", "label", "damage", "publish")
+STAGES = ("aoi", "prepare", "fewshot", "buildings", "damage", "publish")
 
 
 def run_event(
@@ -147,40 +147,10 @@ def _stage_buildings(cfg: DictConfig, paths: PipelinePaths) -> None:
     )
 
 
-def _stage_label(cfg: DictConfig, paths: PipelinePaths) -> None:
-    if not cfg.label.enabled:
-        log.info("label: disabled in config, skipping")
-        return
-    from dda.pipeline.labels import export_for_labelstudio
-
-    docroot_key = cfg.label.docroot_key or f"{cfg.area}/{paths.label_export_dir.name}"
-    tasks_path = export_for_labelstudio(
-        pre_aligned=paths.pre_aligned,
-        post_aligned=paths.post_aligned,
-        buildings_geojson=paths.buildings,
-        out_dir=paths.label_export_dir,
-        docroot_key=docroot_key,
-        tile_size=cfg.label.tile_size,
-        min_buildings=cfg.label.min_buildings,
-    )
-    log.info(
-        "label: LS tasks + config ready -> %s  (import tasks.json + paste config.xml in the UI)",
-        tasks_path,
-    )
-
-
 def _stage_damage(cfg: DictConfig, paths: PipelinePaths) -> None:
     from dda.config import load_config
     from dda.infer import resolve_ckpt
     from dda.pipeline.damage import run_damage_blocked
-
-    if cfg.label.enabled and not cfg.damage.ckpt:
-        log.info(
-            "damage: label.enabled=true and damage.ckpt is unset; skipping. "
-            "Finish the labeling loop (docker compose up, label in LS, dda label-import, "
-            "dda fewshot damage), set damage.ckpt to the tuned checkpoint, then re-run --only damage."
-        )
-        return
 
     train_cfg = load_config(None)
     run_damage_blocked(
@@ -211,7 +181,6 @@ _STAGES = {
     "prepare": _stage_prepare,
     "fewshot": _stage_fewshot,
     "buildings": _stage_buildings,
-    "label": _stage_label,
     "damage": _stage_damage,
     "publish": _stage_publish,
 }

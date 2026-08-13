@@ -32,11 +32,6 @@ buildings:
 damage:
   ckpt: null
 
-label:
-  enabled: true
-  tile_size: 1024
-  min_buildings: 20
-
 publish:
   enabled: false
   repo_id: null

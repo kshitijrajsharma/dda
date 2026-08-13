@@ -74,11 +74,6 @@ buildings:
 damage:
   ckpt: null                       # override the auto-resolved HF damage ckpt
 
-label:
-  enabled: false                   # flip to true to auto-emit Label Studio tile pairs after buildings
-  tile_size: 1024
-  min_buildings: 1
-
 publish:
   enabled: false
   repo_id: null                    # e.g. hotosm/colombia_eq_2026
@@ -143,40 +138,22 @@ post already share a sensor and radiometry matches.
 **Keep raw imagery.** `keep_raw: true` preserves the raw `pre.tif` and `post.tif` alongside
 the aligned versions for QGIS inspection; default deletes them once the aligned files land.
 
-### 6. Label in region
+### 6. Label in region (external)
 
-Set `label.enabled: true` in the YAML and `dda run` writes Label Studio-ready tile pairs
-under `outputs/<area>/label_export/` on the way through. Or run the export standalone:
+Labeling is deliberately out of scope for this repo. The output of `dda buildings`,
+`outputs/<area>/buildings.geojson`, is a plain GeoJSON of building polygons and drops into
+any labeling tool that reads GeoJSON:
 
-```bash
-dda label-export --area colombia_eq_pereira --tile-size 1024 --min-buildings 20
-```
+- [`map-with-fAIr`](https://github.com/hotosm/map-with-fAIr): the HOT tool for reviewing and
+  editing fAIr detections on a slippy map, in the browser.
+- QGIS: open `buildings.geojson`, add a `damage` string column, use the attribute form or
+  the Field Calculator to assign classes per feature.
+- Any other GeoJSON editor.
 
-Bring up Label Studio locally:
-
-```bash
-docker compose up -d          # served at http://localhost:8080
-```
-
-In the LS web UI: create a project, paste `outputs/colombia_eq_pereira/label_export/config.xml`
-into Settings, Labeling Interface. Import tasks from
-`outputs/colombia_eq_pereira/label_export/tasks.json`. Each task shows pre and post side by
-side with existing footprints pre-annotated as polygons (labelled `un-classified`). The
-labeler picks one of five classes per building: `no-damage`, `minor-damage`, `major-damage`,
-`destroyed`, `un-classified`.
-
-`un-classified` is the honest bucket for buildings under cloud, in shadow, or otherwise
-ambiguous. It rasterises to code 5, which falls outside the training range 1..4, so those
-pixels contribute zero gradient during fine-tuning.
-
-Export the labeled JSON from Label Studio, then convert to a training-ready GeoJSON:
-
-```bash
-dda label-import \
-  --studio ~/Downloads/project-N-at-YYYY-MM-DD.json \
-  --meta outputs/colombia_eq_pereira/label_export/tiles/meta.json \
-  --out outputs/colombia_eq_pereira/damage_labels.geojson
-```
+Add a `damage` column with values in `{no-damage, minor-damage, major-damage, destroyed}`
+(or integer codes `1..4`). Anything you leave unlabeled will simply be ignored by the
+fine-tune. Un-classified buildings, if you want to be explicit, can carry code `5` or
+`"un-classified"`, which the loss ignores.
 
 ### 7. Fine-tune in region
 
@@ -191,7 +168,7 @@ dda fewshot buildings \
   --out-dir outputs/colombia_eq_pereira/fs_buildings
 ```
 
-Damage from your Label Studio output:
+Damage from your labels GeoJSON:
 
 ```bash
 dda fewshot damage \
@@ -239,7 +216,6 @@ Prints per-class precision, recall, F1, and the confusion matrix.
 | `outputs/<area>/coreg/drift.json`, `checkerboard.png` | prepare | drift record and visual alignment check |
 | `outputs/<area>/fs_buildings/` | fewshot | HPO trials, best checkpoint, training log |
 | `outputs/<area>/buildings.geojson` | buildings | building footprints |
-| `outputs/<area>/label_export/` | label | Label Studio tile pairs, tasks.json, config.xml (only when `label.enabled: true`) |
 | `outputs/<area>/damage.geojson` | damage | final deliverable, one class + confidence per building |
 
 Every building in `damage.geojson` carries: `damage` (class label), `damage_class` (0..3, or
@@ -263,7 +239,4 @@ docker run --rm --gpus all \
 
 Cache volumes avoid re-downloading model checkpoints on every container start.
 
-For Label Studio, `docker-compose.yml` at the repo root brings up a local instance mounted
-at `./outputs`. First-run credentials come from `LABEL_STUDIO_USERNAME` and
-`LABEL_STUDIO_PASSWORD` env vars (defaults are the placeholder pair in the compose file, so
-set your own).
+Labeling itself lives outside this repo, see section 6.

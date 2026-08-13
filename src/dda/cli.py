@@ -60,7 +60,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _add_pipeline_parsers(sub) -> None:
+def _add_pipeline_parsers(sub) -> None:  # single dispatch table; splitting hurts readability
     p_prep = sub.add_parser("prepare", help="Fetch pre + post rasters, coreg + photometric calibration")
     p_prep.add_argument("--area", required=True)
     p_prep.add_argument("--aoi", required=True)
@@ -140,29 +140,6 @@ def _add_pipeline_parsers(sub) -> None:
     p_pub.add_argument("--repo-id", required=True)
     p_pub.add_argument("--outputs-root", default="outputs")
 
-    p_lx = sub.add_parser(
-        "label-export",
-        help="Chunk pre_aligned + post_aligned into tile pairs for Label Studio",
-    )
-    p_lx.add_argument("--area", required=True)
-    p_lx.add_argument("--outputs-root", default="outputs")
-    p_lx.add_argument("--out-name", default="label_export", help="Subdirectory under outputs/<area>/")
-    p_lx.add_argument("--tile-size", type=int, default=1024)
-    p_lx.add_argument("--min-buildings", type=int, default=1)
-    p_lx.add_argument(
-        "--docroot-key",
-        default=None,
-        help="Path from LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT to the export dir. Default: <area>/<out-name>",
-    )
-
-    p_li = sub.add_parser(
-        "label-import",
-        help="Convert a Label Studio JSON export into a damage-labeled GeoJSON for fewshot damage",
-    )
-    p_li.add_argument("--studio", required=True, help="Label Studio JSON export file")
-    p_li.add_argument("--meta", required=True, help="tiles/meta.json written by label-export")
-    p_li.add_argument("--out", required=True, help="Output GeoJSON with per-building damage class")
-
     p_run = sub.add_parser(
         "run",
         help="Run the whole pipeline from one YAML: aoi/prepare/fewshot/buildings/damage/publish",
@@ -172,13 +149,13 @@ def _add_pipeline_parsers(sub) -> None:
         "-s",
         "--start",
         default=None,
-        choices=["aoi", "prepare", "fewshot", "buildings", "label", "damage", "publish"],
+        choices=["aoi", "prepare", "fewshot", "buildings", "damage", "publish"],
         help="Start from this stage and run through the end",
     )
     p_run.add_argument(
         "--only",
         default=None,
-        choices=["aoi", "prepare", "fewshot", "buildings", "label", "damage", "publish"],
+        choices=["aoi", "prepare", "fewshot", "buildings", "damage", "publish"],
         help="Run exactly this one stage",
     )
     p_run.add_argument("--dry-run", action="store_true", help="Print stage plan without executing")
@@ -309,8 +286,6 @@ def _run_pipeline(args) -> int:  # noqa: PLR0911  # dispatch table by args.comma
         return _run_eval(args)
     if args.command == "fewshot":
         return _run_fewshot(args)
-    if args.command == "label-import":
-        return _run_label_import(args)
     if args.command == "run":
         from dda.event_config import load_event_config
         from dda.pipeline.runner import run_event
@@ -331,8 +306,6 @@ def _run_pipeline(args) -> int:  # noqa: PLR0911  # dispatch table by args.comma
         return _run_damage(args, paths)
     if args.command == "publish":
         return _run_publish(args, paths)
-    if args.command == "label-export":
-        return _run_label_export(args, paths)
     raise SystemExit(f"unknown command: {args.command}")
 
 
@@ -500,35 +473,6 @@ def _run_publish(args, paths) -> int:
             f"damage.geojson missing at {paths.damage}. Run `dda damage --area {args.area}` first."
         )
     push_area_to_hf(area=args.area, area_dir=paths.root, repo_id=args.repo_id)
-    return 0
-
-
-def _run_label_export(args, paths) -> int:
-    from dda.pipeline.labels import export_for_labelstudio
-
-    out_dir = paths.root / args.out_name
-    docroot_key = args.docroot_key or f"{args.area}/{args.out_name}"
-    tasks_path = export_for_labelstudio(
-        pre_aligned=paths.pre_aligned,
-        post_aligned=paths.post_aligned,
-        buildings_geojson=paths.buildings,
-        out_dir=out_dir,
-        docroot_key=docroot_key,
-        tile_size=args.tile_size,
-        min_buildings=args.min_buildings,
-    )
-    print(json.dumps({"tasks": str(tasks_path), "config": str(out_dir / "config.xml")}, indent=2))
-    return 0
-
-
-def _run_label_import(args) -> int:
-    from dda.pipeline.labels import import_from_labelstudio
-
-    import_from_labelstudio(
-        ls_export=Path(args.studio),
-        meta_json=Path(args.meta),
-        out_geojson=Path(args.out),
-    )
     return 0
 
 

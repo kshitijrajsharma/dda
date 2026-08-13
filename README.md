@@ -69,8 +69,6 @@ Per-area pipeline:
 | `dda run` | run the whole pipeline from one event YAML |
 | `dda prepare` | fetch pre + post rasters, coregister pre onto post, per-scene stretch |
 | `dda buildings` | detect footprints (`fair`), pull OSM (`--source osm`), or use your own (`--input`) |
-| `dda label-export` | slice pre + post into tile pairs for Label Studio (side-by-side, footprints pre-annotated) |
-| `dda label-import` | convert a Label Studio JSON export back into a training-ready GeoJSON |
 | `dda damage` | score each building, write `damage.geojson` |
 | `dda eval` | per-class F1 and confusion matrix vs a labelled ground-truth GeoJSON |
 | `dda publish` | upload the area folder to a Hugging Face dataset |
@@ -109,9 +107,10 @@ The base is `python:3.13-slim-bookworm`; torch bundles its own CUDA runtime. The
 runtime. Volumes carry the outputs directory and the HF, torch caches so downloaded
 checkpoints persist between runs.
 
-A separate `docker-compose.yml` at the repo root brings up a local Label Studio for the
-in-region labeling loop; the compose file mounts `./outputs` as the local files root so
-tile pairs written by `dda label-export` (or the `label` stage) are served directly.
+For in-region fine-tuning, label a copy of `outputs/<area>/buildings.geojson` in any tool
+(map-with-fAIr, QGIS, whatever) by adding a `damage` column with values in
+`{no-damage, minor-damage, major-damage, destroyed}` (or `1..4`), then feed it to
+`dda fewshot damage --labels <that.geojson>`.
 
 ### Stack
 

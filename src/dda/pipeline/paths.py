@@ -57,10 +57,6 @@ class PipelinePaths:
         return self.root / "damage.geojson"
 
     @property
-    def label_export_dir(self) -> Path:
-        return self.root / "label_export"
-
-    @property
     def review_dir(self) -> Path:
         return self.root / "review_crops"
 

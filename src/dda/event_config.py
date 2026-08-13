@@ -40,14 +40,6 @@ class DamageConfig:
 
 
 @dataclass
-class LabelConfig:
-    enabled: bool = False
-    tile_size: int = 1024
-    min_buildings: int = 1
-    docroot_key: str | None = None
-
-
-@dataclass
 class PublishConfig:
     enabled: bool = False
     repo_id: str | None = None
@@ -67,7 +59,6 @@ class EventConfig:
     keep_raw: bool = False
     buildings: BuildingsConfig = field(default_factory=BuildingsConfig)
     damage: DamageConfig = field(default_factory=DamageConfig)
-    label: LabelConfig = field(default_factory=LabelConfig)
     publish: PublishConfig = field(default_factory=PublishConfig)
 
 
