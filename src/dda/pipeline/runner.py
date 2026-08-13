@@ -14,14 +14,26 @@ log = logging.getLogger(__name__)
 STAGES = ("aoi", "prepare", "fewshot", "buildings", "label", "damage", "publish")
 
 
-def run_event(cfg: EventConfig, start: str | None = None, dry_run: bool = False) -> None:
-    """Run every stage from `start` onwards. `dry_run=True` prints the plan without executing."""
+def run_event(
+    cfg: EventConfig,
+    start: str | None = None,
+    only: str | None = None,
+    dry_run: bool = False,
+) -> None:
+    """Run stages of the event pipeline. `start` runs from that stage through the end.
+    `only` runs exactly that one stage. `dry_run` prints the plan without executing."""
+    if start and only:
+        raise ValueError("--start and --only are mutually exclusive")
     paths = PipelinePaths.for_area(cfg.area, outputs_root=cfg.outputs_root)
     paths.ensure_dirs()
-    start_idx = STAGES.index(start) if start else 0
-    log.info("dda run: area=%s outputs=%s stages=%s", cfg.area, paths.root, STAGES[start_idx:])
+    if only:
+        planned = (only,)
+    else:
+        start_idx = STAGES.index(start) if start else 0
+        planned = STAGES[start_idx:]
+    log.info("dda run: area=%s outputs=%s stages=%s", cfg.area, paths.root, planned)
 
-    for stage in STAGES[start_idx:]:
+    for stage in planned:
         handler = _STAGES[stage]
         if dry_run:
             log.info("[dry-run] would execute stage: %s", stage)

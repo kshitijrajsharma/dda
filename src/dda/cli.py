@@ -173,7 +173,13 @@ def _add_pipeline_parsers(sub) -> None:
         "--start",
         default=None,
         choices=["aoi", "prepare", "fewshot", "buildings", "label", "damage", "publish"],
-        help="Skip to this stage (all earlier stages assumed already done)",
+        help="Start from this stage and run through the end",
+    )
+    p_run.add_argument(
+        "--only",
+        default=None,
+        choices=["aoi", "prepare", "fewshot", "buildings", "label", "damage", "publish"],
+        help="Run exactly this one stage",
     )
     p_run.add_argument("--dry-run", action="store_true", help="Print stage plan without executing")
     p_run.add_argument(
@@ -310,7 +316,7 @@ def _run_pipeline(args) -> int:  # noqa: PLR0911  # dispatch table by args.comma
         from dda.pipeline.runner import run_event
 
         cfg = load_event_config(args.config, overrides=list(args.overrides))
-        run_event(cfg, start=args.start, dry_run=args.dry_run)
+        run_event(cfg, start=args.start, only=args.only, dry_run=args.dry_run)
         return 0
 
     from dda.pipeline.paths import PipelinePaths
