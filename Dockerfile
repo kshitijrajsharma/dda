@@ -1,0 +1,52 @@
+ARG PYTHON_VERSION=3.13-bookworm-slim
+
+FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION} AS builder
+
+ENV UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_NO_INSTALLER_METADATA=1 \
+    UV_PYTHON_DOWNLOADS=never
+
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --no-dev
+
+COPY src ./src
+COPY conf ./conf
+COPY README.md ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
+
+
+FROM python:3.13-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/src /app/src
+COPY --from=builder /app/conf /app/conf
+COPY --from=builder /app/pyproject.toml /app/pyproject.toml
+
+RUN git clone --depth 1 https://github.com/facebookresearch/dinov3.git \
+        /root/.cache/torch/hub/facebookresearch_dinov3_main \
+    && rm -rf /root/.cache/torch/hub/facebookresearch_dinov3_main/.git
+
+ENV PATH="/app/.venv/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    HF_HOME=/data/hf-cache \
+    XDG_CACHE_HOME=/data/cache \
+    TORCH_HOME=/data/cache/torch
+
+VOLUME ["/data"]
+
+ENTRYPOINT ["dda"]
+CMD ["--help"]

@@ -20,3 +20,7 @@ lightning_logs/
 .DS_Store
 .idea/
 .vscode/
+CLAUDE.md
+*.geojson
+
+archive

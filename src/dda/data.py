@@ -47,7 +47,7 @@ class XbdDamageDataModule(LightningDataModule):
     """xBD pre/post tiles with event-held-out splits.
 
     Splitting by disaster (not random tiles) is deliberate: generic geo-FM decoders score well
-    on random splits but collapse on unseen events, which is exactly the Venezuela regime.
+    on random splits but collapse on unseen events, which is the regime we deploy in.
     """
 
     def __init__(
@@ -147,7 +147,7 @@ class XbdDamageDataModule(LightningDataModule):
         return weights.tolist()
 
     def _damage_target(self, raster: torch.Tensor) -> torch.Tensor:
-        """Map damage codes {1..4}->{0..3} for buildings, background code 0 -> IGNORE_INDEX."""
+        """Remap damage codes for buildings: 1..4 becomes 0..3, background code 0 becomes IGNORE_INDEX."""
         target = torch.full_like(raster, IGNORE_INDEX, dtype=torch.long)
         building = (raster >= 1) & (raster <= N_DAMAGE_CLASSES)
         target[building] = raster[building].long() - 1

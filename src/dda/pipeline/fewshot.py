@@ -1,0 +1,526 @@
+"""Few-shot adaptation of the fAIr buildings model. Backbone is frozen; decoder + heads train.
+Defaults target the small-data regime; warnings fire on tiny chip counts or IoU regression.
+Damage few-shot lives in `dda.pipeline.fewshot_damage`, re-exported below."""
+
+import json
+import logging
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from dda.pipeline.fewshot_damage import FewshotDamageResult, fit_damage
+
+log = logging.getLogger(__name__)
+
+__all__ = [
+    "FewshotBuildingsResult",
+    "FewshotDamageResult",
+    "HpoResult",
+    "fit_buildings",
+    "fit_buildings_from_tm",
+    "fit_damage",
+    "hpo_buildings",
+]
+
+TINY_DATASET_WARN_THRESHOLD = 20
+HPO_LR_RANGE = (1e-5, 5e-4)
+HPO_WD_RANGE = (1e-4, 1e-2)
+HPO_DEFAULT_TRIALS = 8
+HPO_DEFAULT_SEEDS = 1
+
+
+@dataclass(frozen=True)
+class FewshotBuildingsResult:
+    n_train: int
+    n_val: int
+    val_iou_pretrained: float
+    val_iou_finetuned: float
+    delta: float
+    best_ckpt: Path
+    output_dir: Path
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "n_train": self.n_train,
+            "n_val": self.n_val,
+            "val_iou_pretrained": self.val_iou_pretrained,
+            "val_iou_finetuned": self.val_iou_finetuned,
+            "delta": self.delta,
+            "best_ckpt": str(self.best_ckpt),
+            "output_dir": str(self.output_dir),
+        }
+
+
+def _stretch_chip_dir(chips_dir: Path, low: float = 2.0, high: float = 98.0) -> None:
+    """Global 2-98 percentile stretch across all `.tif` chips in `chips_dir`.
+
+    Pixels are aggregated (decimated) from every chip to compute one per-band (low, high)
+    percentile pair, then that same linear scale is applied to every chip. Mirrors the
+    `_apply_percentile_stretch` `dda prepare` runs on the whole `pre_aligned.tif` at inference,
+    so fewshot training chips and inference imagery share the same radiometry.
+    """
+    import numpy as np
+    import rasterio
+
+    tifs = sorted(p for p in chips_dir.glob("*.tif") if not p.name.endswith(".aux.xml"))
+    if not tifs:
+        return
+    sample_stride = 4
+    pooled: list[np.ndarray] = []
+    for tif in tifs:
+        with rasterio.open(tif) as src:
+            arr = src.read([1, 2, 3])[:, ::sample_stride, ::sample_stride]
+        valid = arr.sum(axis=0) > 0
+        if not valid.any():
+            continue
+        pooled.append(arr[:, valid])
+    if not pooled:
+        log.warning("stretch: no valid pixels across %d chips; skipping", len(tifs))
+        return
+    all_pixels = np.concatenate(pooled, axis=1)
+    lows, highs = [], []
+    for b in range(3):
+        lo, hi = np.percentile(all_pixels[b].astype(np.float32), [low, high])
+        if hi - lo < 1.0:
+            hi = lo + 1.0
+        lows.append(float(lo))
+        highs.append(float(hi))
+    log.info(
+        "stretch: pooled %d chips, per-band lows=%s highs=%s",
+        len(tifs),
+        [round(x, 1) for x in lows],
+        [round(x, 1) for x in highs],
+    )
+    for tif in tifs:
+        with rasterio.open(tif) as src:
+            arr = src.read([1, 2, 3]).astype(np.float32)
+            profile = src.profile
+        nodata = arr.sum(axis=0) == 0
+        out = np.empty_like(arr, dtype=np.uint8)
+        for b in range(3):
+            scaled = (arr[b] - lows[b]) * 255.0 / (highs[b] - lows[b])
+            out[b] = np.clip(scaled, 0, 255).astype(np.uint8)
+        out[:, nodata] = 0
+        with rasterio.open(tif, "w", **profile) as dst:
+            dst.write(out)
+
+
+def _buildings_config():
+    """dinov3_hot default is ViT-L. Small batch size so few-shot data has enough steps for
+    OneCycleLR to build a valid warmup + anneal schedule. fp32 on non-CUDA hosts."""
+    import torch
+    from dinov3_hot.config import load_config
+
+    cfg = load_config(None)
+    cfg.batch_size = 8
+    cfg.eval_batch_size = 8
+    if not torch.cuda.is_available():
+        cfg.precision = "32"
+    return cfg
+
+
+def fit_buildings(
+    chips_dir: Path,
+    labels_geojson: Path,
+    out_dir: Path,
+    epochs: int = 10,
+    lr: float = 5e-5,
+    val_frac: float = 0.3,
+    patience: int = 3,
+) -> FewshotBuildingsResult:
+    """Backbone-frozen fine-tune of dinov3l-buildings on `chips_dir` + `labels_geojson`.
+
+    Chips must be georeferenced RGB `.tif`.
+    """
+    from dinov3_hot.finetune import finetune
+
+    from dda.pipeline.buildings import _resolve_building_ckpt
+    from dda.pipeline.hub_utils import enable_offline_torch_hub_fallback
+
+    enable_offline_torch_hub_fallback()
+
+    chips_dir = Path(chips_dir).resolve()
+    labels_geojson = Path(labels_geojson).resolve()
+    out_dir = Path(out_dir).resolve()
+    if not chips_dir.is_dir():
+        raise FileNotFoundError(f"chips_dir does not exist: {chips_dir}")
+    n_chips = len(list(chips_dir.glob("*.tif")))
+    if n_chips == 0:
+        raise FileNotFoundError(f"no .tif chips found under {chips_dir}")
+    if not labels_geojson.exists():
+        raise FileNotFoundError(f"labels_geojson does not exist: {labels_geojson}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if n_chips < TINY_DATASET_WARN_THRESHOLD:
+        log.warning(
+            "fewshot buildings: only %d chips; the trainable surface is decoder + heads "
+            "(millions of params) and will likely overfit. Consider more chips or fewer --epochs.",
+            n_chips,
+        )
+    log.info(
+        "fewshot buildings: %d chips, labels=%s, out=%s, epochs=%d, lr=%.1e",
+        n_chips,
+        labels_geojson.name,
+        out_dir,
+        epochs,
+        lr,
+    )
+    cfg = _buildings_config()
+    pretrained = _resolve_building_ckpt()
+    summary = finetune(
+        cfg=cfg,
+        pretrained_ckpt=str(pretrained),
+        chips_dir=str(chips_dir),
+        labels_geojson=str(labels_geojson),
+        out_dir=str(out_dir),
+        val_frac=val_frac,
+        ft_lr=lr,
+        ft_epochs=epochs,
+        ft_patience=patience,
+    )
+    delta = float(summary["delta"])
+    if delta < 0:
+        log.warning(
+            "fewshot buildings: val IoU regressed by %.4f (pre=%.4f, post=%.4f). "
+            "Overfit signal: keep the pretrained checkpoint instead.",
+            delta,
+            float(summary["val_iou_pretrained"]),
+            float(summary["val_iou_finetuned"]),
+        )
+    return FewshotBuildingsResult(
+        n_train=int(summary["n_train"]),
+        n_val=int(summary["n_val"]),
+        val_iou_pretrained=float(summary["val_iou_pretrained"]),
+        val_iou_finetuned=float(summary["val_iou_finetuned"]),
+        delta=delta,
+        best_ckpt=Path(summary["best_ckpt"]),
+        output_dir=Path(summary["output_dir"]),
+    )
+
+
+def fit_buildings_from_tm(
+    project_ids: list[int],
+    out_dir: Path,
+    zoom: int = 19,
+    imagery_tms_override: str | None = None,
+    epochs: int = 10,
+    lr: float = 5e-5,
+    val_frac: float = 0.3,
+    patience: int = 3,
+    hpo_trials: int = HPO_DEFAULT_TRIALS,
+    hpo_seeds: int = HPO_DEFAULT_SEEDS,
+) -> FewshotBuildingsResult:
+    """Fetch AOI + imagery per TM project, download tiles, pull OSM via PostPass, then fit.
+
+    When `hpo_trials > 0` (default): runs Optuna over (lr, weight_decay) with `hpo_seeds` seeds
+    per trial and uses the best config. `--no-hpo` on the CLI sets `hpo_trials=0` which reverts
+    to a single fit with the passed `lr`.
+    """
+    import asyncio
+
+    from geomltoolkits.downloader.tms import download_tiles
+
+    from dda.pipeline.postpass import fetch_postpass_buildings
+    from dda.pipeline.tm import fetch_tm_project, union_aois
+
+    out_dir = Path(out_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # geomltoolkits.download_tiles creates `<out>/chips/` internally and writes .tif there.
+    tiles_root = out_dir / "tiles"
+    tiles_root.mkdir(exist_ok=True)
+    chips_dir = tiles_root / "chips"
+
+    projects = [fetch_tm_project(pid) for pid in project_ids]
+    imagery_urls = {p.imagery_tms for p in projects if p.imagery_tms}
+    if imagery_tms_override:
+        tms_url = imagery_tms_override
+        log.info("fewshot TM: using --imagery-tms override %s", tms_url)
+    elif len(imagery_urls) == 1:
+        tms_url = next(iter(imagery_urls))
+    elif len(imagery_urls) == 0:
+        raise RuntimeError(
+            "None of the requested TM projects have an `imagery` URL configured; "
+            "pass --imagery-tms to specify one manually."
+        )
+    else:
+        raise RuntimeError(
+            f"TM projects declare {len(imagery_urls)} different imagery URLs "
+            f"({sorted(imagery_urls)}); pass --imagery-tms to pick one."
+        )
+
+    for proj in projects:
+        aoi_path = out_dir / f"aoi_tm{proj.project_id}.geojson"
+        aoi_path.write_text(json.dumps(proj.aoi))
+        log.info("fewshot TM: downloading tiles for TM %d at z%d -> %s", proj.project_id, zoom, chips_dir)
+        asyncio.run(
+            download_tiles(
+                tms=tms_url,
+                zoom=zoom,
+                out=str(tiles_root),
+                geojson=str(aoi_path),
+                within=False,
+                georeference=True,
+                prefix=f"tm{proj.project_id}",
+                extension="tif",
+            )
+        )
+
+    _stretch_chip_dir(chips_dir)
+    aoi_union = union_aois(projects)
+    aoi_union_path = out_dir / "aoi_union.geojson"
+    aoi_union_path.write_text(json.dumps(aoi_union))
+    labels_path = out_dir / "labels.geojson"
+    fetch_postpass_buildings(aoi_union_path, labels_path)
+    if hpo_trials > 0:
+        hpo = hpo_buildings(
+            chips_dir=chips_dir,
+            labels_geojson=labels_path,
+            out_dir=out_dir,
+            epochs=epochs,
+            val_frac=val_frac,
+            patience=patience,
+            n_trials=hpo_trials,
+            n_seeds=hpo_seeds,
+        )
+        return hpo.result
+    return fit_buildings(
+        chips_dir=chips_dir,
+        labels_geojson=labels_path,
+        out_dir=out_dir,
+        epochs=epochs,
+        lr=lr,
+        val_frac=val_frac,
+        patience=patience,
+    )
+
+
+@dataclass(frozen=True)
+class HpoResult:
+    """Return value of `hpo_buildings`: the best-fit model + the search trace."""
+
+    result: FewshotBuildingsResult
+    best_lr: float
+    best_weight_decay: float
+    best_trial_mean_iou: float
+    best_trial_iou_std: float
+    pretrained_iou: float
+    use_pretrained_instead: bool
+    trials: list[dict[str, Any]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            **self.result.to_dict(),
+            "best_lr": self.best_lr,
+            "best_weight_decay": self.best_weight_decay,
+            "best_trial_mean_iou": self.best_trial_mean_iou,
+            "best_trial_iou_std": self.best_trial_iou_std,
+            "pretrained_iou": self.pretrained_iou,
+            "use_pretrained_instead": self.use_pretrained_instead,
+            "trials": self.trials,
+        }
+
+
+def hpo_buildings(
+    chips_dir: Path,
+    labels_geojson: Path,
+    out_dir: Path,
+    epochs: int = 10,
+    val_frac: float = 0.3,
+    patience: int = 3,
+    n_trials: int = HPO_DEFAULT_TRIALS,
+    n_seeds: int = HPO_DEFAULT_SEEDS,
+) -> HpoResult:
+    """Optuna search over (lr, weight_decay) for the buildings few-shot fit.
+
+    Each trial scores by mean val_iou_finetuned across `n_seeds` random splits (removes
+    lucky-split noise on tiny datasets). Fails safe: if the best trial's mean IoU falls below
+    the pretrained baseline, the returned result has `use_pretrained_instead=True` — the caller
+    should keep the pretrained checkpoint rather than shipping a worse fine-tune.
+    """
+    import statistics
+
+    import optuna
+    from dinov3_hot.finetune import finetune
+
+    from dda.pipeline.buildings import _resolve_building_ckpt
+
+    chips_dir = Path(chips_dir).resolve()
+    labels_geojson = Path(labels_geojson).resolve()
+    out_dir = Path(out_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    trials_dir = out_dir / "hpo_trials"
+    pretrained = _resolve_building_ckpt()
+
+    trials_log: list[dict[str, Any]] = []
+    pretrained_iou_ref: list[float] = []
+
+    def _objective(trial: "optuna.trial.Trial") -> float:
+        lr = trial.suggest_float("lr", *HPO_LR_RANGE, log=True)
+        wd = trial.suggest_float("weight_decay", *HPO_WD_RANGE, log=True)
+        seed_ious: list[float] = []
+        pre_ious: list[float] = []
+        for seed_i in range(n_seeds):
+            cfg = _buildings_config()
+            cfg.seed = 42 + seed_i
+            cfg.weight_decay = wd
+            trial_out = trials_dir / f"t{trial.number:02d}_s{seed_i}"
+            summary = finetune(
+                cfg=cfg,
+                pretrained_ckpt=str(pretrained),
+                chips_dir=str(chips_dir),
+                labels_geojson=str(labels_geojson),
+                out_dir=str(trial_out),
+                val_frac=val_frac,
+                ft_lr=lr,
+                ft_epochs=epochs,
+                ft_patience=patience,
+            )
+            seed_ious.append(float(summary["val_iou_finetuned"]))
+            pre_ious.append(float(summary["val_iou_pretrained"]))
+        mean_iou = statistics.mean(seed_ious)
+        std_iou = statistics.stdev(seed_ious) if len(seed_ious) > 1 else 0.0
+        trials_log.append(
+            {
+                "trial": trial.number,
+                "lr": lr,
+                "weight_decay": wd,
+                "seed_ious": seed_ious,
+                "mean_iou": mean_iou,
+                "std_iou": std_iou,
+                "pretrained_iou_mean": statistics.mean(pre_ious),
+            }
+        )
+        pretrained_iou_ref.extend(pre_ious)
+        log.info(
+            "hpo trial %d: lr=%.2e wd=%.2e mean_iou=%.4f std=%.4f",
+            trial.number,
+            lr,
+            wd,
+            mean_iou,
+            std_iou,
+        )
+        return mean_iou
+
+    log.info(
+        "hpo_buildings: %d trials x %d seeds = %d fits (lr %s, wd %s)",
+        n_trials,
+        n_seeds,
+        n_trials * n_seeds,
+        HPO_LR_RANGE,
+        HPO_WD_RANGE,
+    )
+    # Persistent SQLite storage so an interrupted run resumes on the next call instead of
+    # re-running completed trials.
+    study_db = out_dir / "hpo_study.db"
+    study = optuna.create_study(
+        direction="maximize",
+        sampler=optuna.samplers.TPESampler(seed=0),
+        storage=f"sqlite:///{study_db}",
+        study_name="fewshot_buildings",
+        load_if_exists=True,
+    )
+    done = len(study.trials)
+    if done > 0:
+        log.info("hpo_buildings: resuming from %d completed trials", done)
+    remaining = max(0, n_trials - done)
+    if remaining > 0:
+        study.optimize(_objective, n_trials=remaining, show_progress_bar=False)
+
+    best_lr = float(study.best_params["lr"])
+    best_wd = float(study.best_params["weight_decay"])
+    best_mean = float(study.best_value)
+    best_std = next(t["std_iou"] for t in trials_log if t["trial"] == study.best_trial.number)
+    pretrained_iou = statistics.mean(pretrained_iou_ref) if pretrained_iou_ref else 0.0
+    use_pretrained_instead = best_mean < pretrained_iou
+    if use_pretrained_instead:
+        log.warning(
+            "hpo_buildings: best trial mean IoU %.4f is BELOW pretrained baseline %.4f. "
+            "Ship the pretrained checkpoint; do NOT use the fine-tuned one.",
+            best_mean,
+            pretrained_iou,
+        )
+    log.info(
+        "hpo_buildings: best lr=%.2e wd=%.2e mean_iou=%.4f (pretrained=%.4f)",
+        best_lr,
+        best_wd,
+        best_mean,
+        pretrained_iou,
+    )
+
+    final = fit_buildings_with_config(
+        chips_dir=chips_dir,
+        labels_geojson=labels_geojson,
+        out_dir=out_dir,
+        epochs=epochs,
+        lr=best_lr,
+        weight_decay=best_wd,
+        val_frac=val_frac,
+        patience=patience,
+    )
+    (out_dir / "hpo_report.json").write_text(
+        json.dumps(
+            {
+                "best_lr": best_lr,
+                "best_weight_decay": best_wd,
+                "best_trial_mean_iou": best_mean,
+                "best_trial_iou_std": best_std,
+                "pretrained_iou_mean": pretrained_iou,
+                "use_pretrained_instead": use_pretrained_instead,
+                "n_trials": n_trials,
+                "n_seeds_per_trial": n_seeds,
+                "trials": trials_log,
+            },
+            indent=2,
+        )
+    )
+    return HpoResult(
+        result=final,
+        best_lr=best_lr,
+        best_weight_decay=best_wd,
+        best_trial_mean_iou=best_mean,
+        best_trial_iou_std=best_std,
+        pretrained_iou=pretrained_iou,
+        use_pretrained_instead=use_pretrained_instead,
+        trials=trials_log,
+    )
+
+
+def fit_buildings_with_config(
+    chips_dir: Path,
+    labels_geojson: Path,
+    out_dir: Path,
+    epochs: int,
+    lr: float,
+    weight_decay: float,
+    val_frac: float = 0.3,
+    patience: int = 3,
+) -> FewshotBuildingsResult:
+    """Same as `fit_buildings` but also overrides `weight_decay`. Used as the HPO final fit."""
+    from dinov3_hot.finetune import finetune
+
+    from dda.pipeline.buildings import _resolve_building_ckpt
+
+    pretrained = _resolve_building_ckpt()
+    cfg = _buildings_config()
+    cfg.weight_decay = weight_decay
+    summary = finetune(
+        cfg=cfg,
+        pretrained_ckpt=str(pretrained),
+        chips_dir=str(chips_dir),
+        labels_geojson=str(labels_geojson),
+        out_dir=str(out_dir),
+        val_frac=val_frac,
+        ft_lr=lr,
+        ft_epochs=epochs,
+        ft_patience=patience,
+    )
+    delta = float(summary["delta"])
+    return FewshotBuildingsResult(
+        n_train=int(summary["n_train"]),
+        n_val=int(summary["n_val"]),
+        val_iou_pretrained=float(summary["val_iou_pretrained"]),
+        val_iou_finetuned=float(summary["val_iou_finetuned"]),
+        delta=delta,
+        best_ckpt=Path(summary["best_ckpt"]),
+        output_dir=Path(summary["output_dir"]),
+    )

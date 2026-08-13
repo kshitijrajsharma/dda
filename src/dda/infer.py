@@ -11,17 +11,25 @@ from scipy.signal.windows import gaussian as gauss1d
 
 from dda.config import N_DAMAGE_CLASSES
 from dda.data import DINOV3_MEAN, DINOV3_STD
+from dda.hf_utils import resolve_sha_pinned_ckpt
 from dda.model import DinoV3DamageLit
 from dda.pool import assign_damage
 
 log = logging.getLogger(__name__)
 
+DAMAGE_CKPT_SHA256 = "87485943ee286973168314a31ab62c0618e60d9b13d2ae7942dc82a4cee3eab7"
+
 
 def resolve_ckpt(cfg, ckpt_path: str | Path | None = None) -> str:
-    """Use the given checkpoint, else auto-download the trained model from the Hub."""
-    if ckpt_path:
-        return str(ckpt_path)
-    return hf_hub_download(repo_id=cfg.model_repo, filename=cfg.model_file)
+    return str(
+        resolve_sha_pinned_ckpt(
+            cfg.model_repo,
+            cfg.model_file,
+            DAMAGE_CKPT_SHA256,
+            override_path=ckpt_path,
+            label="damage ckpt",
+        )
+    )
 
 
 def load_model(ckpt_path: str | Path, cfg, device: str = "cuda") -> DinoV3DamageLit:

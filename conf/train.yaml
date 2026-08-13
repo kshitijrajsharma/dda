@@ -4,7 +4,7 @@ dataset_splits:
   - train
   - tier3
 
-hf_ckpt_file: dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth
+hf_ckpt_file: dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth
 img_size: 512
 use_pre: true
 modality_dropout: 0.3

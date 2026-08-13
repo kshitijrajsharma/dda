@@ -1,7 +1,11 @@
-"""Build an HF dataset of pre/post tiles + damage rasters + polygons from a raw xBD download.
+"""Reproducibility script: rebuild the xBD training dataset from a raw xBD download.
 
-Reads the canonical xBD layout (any mirror), rasterises post-disaster subtypes into a uint8 raster,
-and keeps post polygons for object-level evaluation. Usage:
+Not part of the normal workflow. The published dataset is already on HF at
+`kshitijrajsharma/xview2-xbd` (referenced from `conf/train.yaml`); use that unless you
+specifically need to rebuild from a different mirror or format.
+
+Reads the canonical xBD layout (any mirror), rasterises post-disaster subtypes into a uint8
+raster, keeps post polygons for object-level evaluation. Usage:
     uv run python scripts/build_xbd_dataset.py --xbd-root /path/to/xBD --repo-id <user>/xbd-damage
 """
 
