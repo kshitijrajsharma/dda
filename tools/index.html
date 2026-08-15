@@ -612,8 +612,8 @@ function hideChip(side) {
  * map drag while the range input is being dragged, so the map viewport stays put.
  */
 function refreshComposition() {
-  $("empty-pre").style.display = state.pre ? "none" : "";
-  $("empty-post").style.display = state.post ? "none" : "";
+  $("empty-pre").style.display = state.pre ? "none" : "block";
+  $("empty-post").style.display = state.post ? "none" : "block";
   const both = !!state.pre && !!state.post;
   $("hairline").classList.toggle("hidden", both);
   if (state.sideBySide) { state.map.removeControl(state.sideBySide); state.sideBySide = null; }
@@ -1406,9 +1406,6 @@ function boot() {
   L.control.zoom({ position: "bottomleft" }).addTo(state.map);
   // Expose for end-to-end testing hooks; the app itself never reads this back.
   window._ddaMap = state.map;
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 20, attribution: "&copy; OpenStreetMap",
-  }).addTo(state.map);
   L.control.attribution({ position: "bottomleft" }).addTo(state.map);
   state.map.on("moveend zoomend", writeShareUrl);
   state.map.on("zoomend", refreshClusterVisibility);
