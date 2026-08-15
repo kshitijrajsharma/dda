@@ -72,7 +72,6 @@ class TrainConfig:
     radiometric_normalize: bool = True
     pool_op: str = "percentile"
     pool_percentile: float = 80.0
-    confidence_threshold: float = 0.5
     temperature: float = 1.0
 
 

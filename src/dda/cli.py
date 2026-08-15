@@ -341,15 +341,15 @@ def _run_buildings(args, paths) -> int:
         import geopandas as gpd
 
         gdf = gpd.read_file(args.input).to_crs("EPSG:4326").reset_index(drop=True)
-        if "class" not in gdf.columns:
-            gdf["class"] = 1
-        if "score" not in gdf.columns:
-            gdf["score"] = 1.0
+        if "score" in gdf.columns and "building_confidence" not in gdf.columns:
+            gdf = gdf.rename(columns={"score": "building_confidence"})
+        if "building_confidence" not in gdf.columns:
+            gdf["building_confidence"] = 1.0
         if "source" not in gdf.columns:
             gdf["source"] = "user"
         if "id" not in gdf.columns:
             gdf["id"] = range(len(gdf))
-        gdf[["id", "class", "score", "source", "geometry"]].to_file(paths.buildings, driver="GeoJSON")
+        gdf[["id", "building_confidence", "source", "geometry"]].to_file(paths.buildings, driver="GeoJSON")
         logging.getLogger(__name__).info(
             "buildings: copied %d user-supplied footprints -> %s",
             len(gdf),

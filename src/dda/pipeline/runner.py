@@ -124,12 +124,14 @@ def _stage_buildings(cfg: DictConfig, paths: PipelinePaths) -> None:
         import geopandas as gpd
 
         gdf = gpd.read_file(cfg.buildings.input).to_crs("EPSG:4326").reset_index(drop=True)
-        for col, default in [("class", 1), ("score", 1.0), ("source", "user")]:
+        if "score" in gdf.columns and "building_confidence" not in gdf.columns:
+            gdf = gdf.rename(columns={"score": "building_confidence"})
+        for col, default in [("building_confidence", 1.0), ("source", "user")]:
             if col not in gdf.columns:
                 gdf[col] = default
         if "id" not in gdf.columns:
             gdf["id"] = range(len(gdf))
-        gdf[["id", "class", "score", "source", "geometry"]].to_file(paths.buildings, driver="GeoJSON")
+        gdf[["id", "building_confidence", "source", "geometry"]].to_file(paths.buildings, driver="GeoJSON")
         log.info("buildings: copied %d user footprints -> %s", len(gdf), paths.buildings)
         return
     if cfg.buildings.source == "osm":

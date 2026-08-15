@@ -173,8 +173,9 @@ def run_fair_buildings(  # noqa: PLR0915  # single-purpose macroblock loop, spli
                 regularize_overlap_tol_m2=_INFER["regularize_overlap_tol_m2"],
             )
             if len(gdf):
-                scored = add_scores(gdf, lab, mp, tr, crs).to_crs(4326).assign(**{"class": 1})
-                feats = json.loads(scored[["class", "score", "geometry"]].to_json())["features"]
+                scored = add_scores(gdf, lab, mp, tr, crs).to_crs(4326)
+                scored = scored.rename(columns={"score": "building_confidence"})
+                feats = json.loads(scored[["building_confidence", "geometry"]].to_json())["features"]
             else:
                 feats = []
             del mp, dist, lab, gdf
@@ -212,6 +213,8 @@ def run_fair_buildings(  # noqa: PLR0915  # single-purpose macroblock loop, spli
             )
         )
     ]
+    for i, f in enumerate(final):
+        f.setdefault("properties", {})["id"] = i
     out_geojson.write_text(json.dumps({"type": "FeatureCollection", "features": final}))
     log.info(
         "buildings: WROTE %d buildings -> %s (%ds)",

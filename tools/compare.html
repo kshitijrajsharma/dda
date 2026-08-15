@@ -1,0 +1,1465 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>DDA compare, pre / post satellite viewer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+  :root {
+    --ground: #FFFFFF;
+    --ink: #111111;
+    --muted: #6B7280;
+    --rule: #E5E5E5;
+    --rule-strong: #C9C9C9;
+    --red: #d73f3f;
+    --shade: rgba(17,17,17,.32);
+    --sans: system-ui, sans-serif;
+    --mono: monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; background: var(--ground); color: var(--ink); font: 14px/1.45 var(--sans); }
+  button { font: inherit; color: inherit; }
+
+  /* Top bar */
+  #topbar { height: 44px; display: flex; align-items: center; padding: 0 18px; border-bottom: 1px solid var(--rule); position: relative; z-index: 400; background: var(--ground); }
+  #topbar .brand { font: 600 12px/1 var(--sans); letter-spacing: .18em; text-transform: uppercase; }
+  #topbar .brand em { font-style: normal; color: var(--red); }
+  #topbar .event { margin-left: 24px; color: var(--muted); font: 500 12px/1 var(--sans); }
+  #topbar .event strong { color: var(--ink); font-weight: 600; }
+  #topbar .actions { margin-left: auto; display: flex; gap: 4px; }
+  .topaction { padding: 6px 10px; border: 0; background: transparent; font: 500 12px/1 var(--sans); color: var(--muted); cursor: pointer; border-radius: 4px; }
+  .topaction:hover { color: var(--ink); background: #F7F7F7; }
+  .topaction.on { color: var(--red); }
+  .topaction .badge { display: inline-block; margin-left: 4px; padding: 1px 6px; border-radius: 999px; background: var(--red); color: white; font: 600 10px/1.6 var(--mono); }
+
+  /* Stage: leaflet map + overlay chrome */
+  #stage { position: absolute; top: 44px; right: 0; bottom: 0; left: 0; }
+  #map { position: absolute; inset: 0; }
+
+  .eyebrow { position: absolute; top: 12px; z-index: 500; font: 600 12px/1 var(--sans); color: var(--muted); background: rgba(255,255,255,.92); border: 1px solid var(--rule); padding: 5px 9px; border-radius: 4px; pointer-events: none; }
+  .eyebrow.pre { left: 14px; }
+  .eyebrow.post { right: 14px; }
+  .eyebrow.loaded { color: var(--red); }
+
+  .meta { position: absolute; top: 12px; z-index: 500; display: flex; gap: 8px; align-items: center; font: 500 11px/1 var(--mono); color: var(--ink); background: rgba(255,255,255,.92); border: 1px solid var(--rule); padding: 5px 8px; border-radius: 4px; pointer-events: auto; max-width: 42vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta.pre { left: 96px; }
+  .meta.post { right: 96px; }
+  .meta .dot { width: 6px; height: 6px; background: var(--red); border-radius: 50%; flex: 0 0 auto; }
+  .meta .clear { border: 0; background: transparent; padding: 0 0 0 6px; color: var(--muted); cursor: pointer; font: 500 12px/1 var(--sans); }
+  .meta .clear:hover { color: var(--red); }
+
+  /* Central hairline visible in empty/half state */
+  #hairline { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: var(--rule); z-index: 300; transform: translateX(-.5px); pointer-events: none; }
+  #hairline.hidden { display: none; }
+
+  /* Empty-state cards, one per side */
+  .empty-card { position: absolute; top: 50%; transform: translate(-50%, -50%); z-index: 350; width: min(360px, 40vw); background: var(--ground); border: 1.5px dashed var(--rule-strong); border-radius: 8px; padding: 26px 22px; text-align: center; box-shadow: 0 6px 24px rgba(17,17,17,.08); }
+  .empty-card.pre { left: 25%; }
+  .empty-card.post { left: 75%; }
+  .empty-card .plus { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1.5px solid var(--ink); border-radius: 50%; font: 300 22px/1 var(--sans); margin-bottom: 12px; }
+  .empty-card .title { font: 500 17px/1.25 var(--sans); margin: 4px 0 6px; }
+  .empty-card .sub { font: 500 12px/1.45 var(--sans); color: var(--muted); }
+  .empty-card .cta { margin-top: 14px; padding: 8px 16px; background: var(--ink); color: white; border: 0; border-radius: 4px; font: 500 13px/1 var(--sans); cursor: pointer; }
+  .empty-card .cta:hover { background: #000; }
+  .empty-card .sources { margin-top: 12px; font: 500 10px/1.4 var(--mono); letter-spacing: .06em; color: var(--muted); text-transform: uppercase; }
+  .empty-card .drop { margin-top: 12px; border: 1px dashed var(--rule); border-radius: 4px; padding: 6px; font: 500 11px/1 var(--sans); color: var(--muted); }
+  .empty-card .drop.hover { border-color: var(--red); color: var(--red); }
+
+  /* Overlays right-side sheet */
+  .sheet-right { position: fixed; top: 44px; bottom: 0; right: 0; width: 320px; background: var(--ground); border-left: 1px solid var(--rule); z-index: 900; transform: translateX(100%); transition: transform .18s ease; display: flex; flex-direction: column; }
+  .sheet-right.on { transform: translateX(0); }
+  .sheet-head { padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--rule); }
+  .sheet-head h3 { margin: 0; font: 600 12px/1 var(--sans); letter-spacing: .12em; text-transform: uppercase; }
+  .sheet-body { padding: 14px 18px; overflow-y: auto; flex: 1; }
+  .field { display: grid; grid-template-columns: 1fr auto; gap: 6px; margin-bottom: 8px; }
+  input[type=text], input[type=search], select { padding: 8px 10px; background: var(--ground); color: var(--ink); border: 1px solid var(--rule); border-radius: 4px; font: 500 13px/1.2 var(--sans); width: 100%; box-sizing: border-box; }
+  input:focus, select:focus { outline: none; border-color: var(--ink); }
+  .btn { padding: 8px 12px; background: var(--ground); border: 1px solid var(--ink); border-radius: 4px; font: 500 12px/1.2 var(--sans); color: var(--ink); cursor: pointer; }
+  .btn:hover { background: #F7F7F7; }
+  .btn.primary { background: var(--ink); color: white; }
+  .btn.primary:hover { background: #000; }
+  .btn.danger { border-color: var(--red); color: var(--red); }
+  .btn.danger:hover { background: var(--red); color: white; }
+  .btn.ghost { border-color: var(--rule); color: var(--ink); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.small { padding: 4px 8px; font-size: 11px; }
+
+  .layer-item { display: grid; grid-template-columns: auto 1fr auto auto; gap: 8px; align-items: center; padding: 8px; border: 1px solid var(--rule); border-radius: 4px; margin-top: 8px; }
+  .layer-item input[type=checkbox] { accent-color: var(--red); }
+  .layer-item .swatch { width: 16px; height: 16px; border-radius: 2px; border: 1px solid var(--rule); padding: 0; cursor: pointer; }
+  .layer-item .name { font: 500 12px/1.2 var(--sans); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .layer-drop { margin-top: 8px; border: 1px dashed var(--rule); border-radius: 4px; padding: 8px; text-align: center; font: 500 11px/1 var(--sans); color: var(--muted); }
+  .layer-drop.hover { border-color: var(--red); color: var(--red); }
+
+  /* Modal */
+  #modal { position: fixed; inset: 0; background: var(--shade); z-index: 1000; display: none; align-items: center; justify-content: center; padding: 20px; }
+  #modal.on { display: flex; }
+  .modal-sheet { width: min(560px, 96%); background: var(--ground); border-radius: 8px; box-shadow: 0 20px 60px rgba(0,0,0,.28); display: flex; flex-direction: column; max-height: 88vh; overflow: hidden; }
+  .modal-head { padding: 16px 20px; border-bottom: 1px solid var(--rule); display: flex; align-items: center; justify-content: space-between; }
+  .modal-head strong { font: 500 14px/1 var(--sans); }
+  .modal-head strong em { font-style: normal; color: var(--red); font-weight: 600; text-transform: uppercase; letter-spacing: .12em; margin-right: 6px; font-size: 11px; }
+  .tabs { display: flex; border-bottom: 1px solid var(--rule); }
+  .tabs button { flex: 1; padding: 12px 8px; background: transparent; border: 0; color: var(--muted); font: 500 12px/1 var(--sans); cursor: pointer; border-bottom: 2px solid transparent; }
+  .tabs button.active { color: var(--ink); border-bottom-color: var(--red); }
+  .tab-panel { padding: 14px 18px 18px; overflow-y: auto; flex: 1; }
+  .tab-panel[hidden] { display: none; }
+
+  .search-row { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; }
+  .row-inline { display: flex; gap: 8px; align-items: center; }
+
+  .result { display: grid; grid-template-columns: 60px 1fr auto; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--rule); align-items: center; }
+  .result:last-child { border-bottom: 0; }
+  .result .thumb { width: 60px; height: 60px; background: #EEE; border-radius: 4px; object-fit: cover; }
+  .result .name { font: 600 13px/1.25 var(--sans); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .result .subs { margin-top: 3px; font: 500 11px/1.3 var(--mono); color: var(--muted); }
+
+  /* Status toast */
+  #status { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 950; background: var(--ink); color: white; padding: 8px 14px; border-radius: 4px; font: 500 12px/1 var(--sans); opacity: 0; transition: opacity .15s; pointer-events: none; }
+  #status.on { opacity: 1; }
+  #status.err { background: var(--red); }
+
+  /* Share popover */
+  .popover { position: absolute; top: 44px; right: 12px; z-index: 950; background: var(--ground); border: 1px solid var(--rule); border-radius: 6px; padding: 12px; box-shadow: 0 12px 32px rgba(0,0,0,.12); display: none; width: 360px; }
+  .popover.on { display: block; }
+
+  /* Leaflet neutralization */
+  .leaflet-container { background: #F7F7F7; }
+
+  /* leaflet-side-by-side overrides. Range width stays untouched (plugin needs full-width).
+     Thumb is a clear white circle with a chevron grip so it reads as draggable at a glance. */
+  .leaflet-sbs-divider {
+    background: rgba(255,255,255,.9) !important;
+    width: 2px !important;
+    margin-left: -1px !important;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.15) !important;
+  }
+  /* Chevron grip drawn as an inline SVG data URI on white ground. */
+  .leaflet-sbs-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 44px !important;
+    height: 44px !important;
+    border-radius: 50% !important;
+    background: white !important;
+    border: 1px solid rgba(17,17,17,.28) !important;
+    box-shadow: 0 3px 10px rgba(0,0,0,.14) !important;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23444' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 6l-4 6 4 6M15 6l4 6-4 6'/></svg>") !important;
+    background-position: 50% 50% !important;
+    background-repeat: no-repeat !important;
+    background-size: 24px 24px !important;
+    cursor: ew-resize;
+  }
+  .leaflet-sbs-range::-moz-range-thumb {
+    width: 44px !important;
+    height: 44px !important;
+    border-radius: 50% !important;
+    background: white !important;
+    border: 1px solid rgba(17,17,17,.28) !important;
+    box-shadow: 0 3px 10px rgba(0,0,0,.14) !important;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23444' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 6l-4 6 4 6M15 6l4 6-4 6'/></svg>") !important;
+    background-position: 50% 50% !important;
+    background-repeat: no-repeat !important;
+    background-size: 24px 24px !important;
+    cursor: ew-resize;
+  }
+
+  /* Cursor hint: while hovering near the divider the pointer becomes an ew-resize. The
+     hit test itself is done in JS on the map container in capture phase. */
+
+  /* Meta chip becomes an obvious click target once loaded. */
+  .meta { cursor: pointer; }
+  .meta:hover { background: rgba(255,255,255,1); border-color: var(--ink); }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">DDA / <em>Compare</em></div>
+  <div class="event">Event <strong id="event-name">not set</strong></div>
+  <div class="actions">
+    <button class="topaction" id="btn-layers">Layers <span class="badge" id="layers-count" hidden>0</span></button>
+    <button class="topaction" id="btn-share">Share</button>
+  </div>
+</div>
+
+<div id="stage">
+  <div id="map"></div>
+
+  <!-- Central hairline shown only when at least one side is empty -->
+  <div id="hairline"></div>
+
+  <!-- Eyebrows and meta chips -->
+  <div class="eyebrow pre" id="eyebrow-pre">Before</div>
+  <div class="eyebrow post" id="eyebrow-post">After</div>
+  <div class="meta pre" id="meta-pre" hidden><span class="dot"></span><span class="text"></span><button class="clear" title="Clear before"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg></button></div>
+  <div class="meta post" id="meta-post" hidden><span class="dot"></span><span class="text"></span><button class="clear" title="Clear after"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg></button></div>
+
+  <!-- Empty-state cards -->
+  <div class="empty-card pre" id="empty-pre" data-side="pre">
+    <div class="plus">+</div>
+    <div class="title">Choose before imagery</div>
+    <div class="sub">Search a place, use the current view, or paste a COG URL.</div>
+    <button class="cta" data-open-modal data-side="pre">Choose imagery</button>
+    <div class="sources">OpenAerialMap · Vantor open data · direct URL</div>
+    <div class="drop" data-drop-raster data-side="pre">or drop a local .tif</div>
+  </div>
+  <div class="empty-card post" id="empty-post" data-side="post">
+    <div class="plus">+</div>
+    <div class="title">Choose after imagery</div>
+    <div class="sub">Same catalogue; the second scene enables the divider.</div>
+    <button class="cta" data-open-modal data-side="post">Choose imagery</button>
+    <div class="sources">OpenAerialMap · Vantor open data · direct URL</div>
+    <div class="drop" data-drop-raster data-side="post">or drop a local .tif</div>
+  </div>
+
+  <div id="status"></div>
+</div>
+
+<!-- Layers sheet (overlays + AOI unified) -->
+<aside class="sheet-right" id="layers-sheet">
+  <div class="sheet-head">
+    <h3>Layers</h3>
+    <button class="btn ghost small" id="layers-close">Close</button>
+  </div>
+  <div class="sheet-body">
+    <div class="field">
+      <input type="text" id="layer-input" placeholder="GeoJSON URL"/>
+      <button class="btn primary" id="layer-add">Add</button>
+    </div>
+    <div class="field" style="grid-template-columns:1fr;">
+      <button class="btn" id="layer-draw">Draw rectangle</button>
+    </div>
+    <div class="layer-drop" data-drop-geojson>drop .geojson / .json files here</div>
+    <ul id="layers-list" style="list-style:none;padding:0;margin:14px 0 0;"></ul>
+  </div>
+</aside>
+
+<!-- Share popover -->
+<div class="popover" id="share-popover">
+  <div style="font: 500 12px/1 var(--sans); color: var(--muted); text-transform: uppercase; letter-spacing: .12em; margin-bottom: 8px;">Share this view</div>
+  <div class="field" style="margin-bottom:0;">
+    <input type="text" id="share-url" readonly/>
+    <button class="btn" id="share-copy">Copy</button>
+  </div>
+  <div id="share-warning" style="margin-top:10px;font-size:12px;color:var(--muted);" hidden></div>
+</div>
+
+<!-- Choose-imagery modal -->
+<div id="modal">
+  <div class="modal-sheet">
+    <div class="modal-head">
+      <strong><em id="modal-side">before</em>Choose imagery</strong>
+      <button class="btn ghost small" id="modal-close">Close</button>
+    </div>
+    <div class="tab-panel" data-tab="unified">
+      <div class="search-row" style="margin-bottom:6px;">
+        <input type="search" id="smart-input" placeholder="Place name, STAC Item URL, COG URL, or 24-hex OAM id"/>
+        <button class="btn primary" id="smart-go">Use</button>
+      </div>
+      <div style="color:var(--muted);font-size:11px;margin-bottom:14px;">
+        Auto-detects what you paste. Place names go through OpenAerialMap over the geocoded bbox.
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
+        <button class="btn" id="browse-oam">OpenAerialMap here</button>
+        <button class="btn" id="browse-vantor">Vantor open data</button>
+        <button class="btn" id="browse-basemaps">Basemaps</button>
+        <span style="flex:1;text-align:right;font-size:11px;color:var(--muted);" id="browse-hint"></span>
+      </div>
+      <div id="vantor-picker" hidden style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+        <select id="vantor-event" style="flex:1;"><option value="">Loading events</option></select>
+        <label class="row-inline" style="font-size:12px;color:var(--muted);white-space:nowrap;">
+          <input type="checkbox" id="vantor-in-view" checked style="margin-right:6px;accent-color:var(--red);"/>only in view
+        </label>
+      </div>
+      <div id="results-box"><div style="color:var(--muted);font-size:12px;">Paste a URL, type a place, or hit a browse button.</div></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/digidem/leaflet-side-by-side/leaflet-side-by-side.js"></script>
+<script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.js"></script>
+<script src="https://unpkg.com/proj4@2.11.0/dist/proj4.js"></script>
+<script src="https://unpkg.com/georaster@1.6.0/dist/georaster.browser.bundle.min.js"></script>
+<script src="https://unpkg.com/georaster-layer-for-leaflet@3.10.0/dist/georaster-layer-for-leaflet.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script>
+/*
+ * Compare visualiser: full-screen split, red-white-black palette, one modal for all sources.
+ * Query params: ?pre=<url|oam_id>&post=<url|oam_id>&layer=<url>&center=lat,lon,zoom&event=<name>
+ * Both cards accept local .tif via drop; overlays sheet accepts .geojson via drop.
+ */
+
+const TITILER = "https://titiler.hotosm.org/cog/tiles/WebMercatorQuad/{z}/{x}/{y}@1x";
+const TITILER_PREVIEW = "https://titiler.hotosm.org/cog/preview.png";
+function titilerPreviewUrl(cogUrl, maxSize = 96) {
+  return `${TITILER_PREVIEW}?url=${encodeURIComponent(cogUrl)}&max_size=${maxSize}`;
+}
+const OAM_META = location.origin.match(/^https?:\/\/(127|localhost)/)
+  ? "/oam-api/meta"
+  : "https://api.openaerialmap.org/meta";
+const OAM_ONE = (id) => `${OAM_META}/${id}`;
+const NOMINATIM = "https://nominatim.openstreetmap.org/search";
+const VANTOR_ROOT = "https://vantor-opendata.s3.amazonaws.com/";
+
+/** Global XYZ tile services that make good pre/post fallbacks when there is no VHR pair. */
+const BASEMAPS = [
+  { title: "ESRI World Imagery", tileUrl: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    attribution: "Source: Esri, Maxar, Earthstar Geographics", maxZoom: 20 },
+  { title: "Google Satellite", tileUrl: "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+    attribution: "Google", maxZoom: 21 },
+  { title: "OpenStreetMap", tileUrl: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    attribution: "&copy; OpenStreetMap", maxZoom: 19, subdomains: "abc" },
+];
+const OAM_ID_RE = /^[0-9a-f]{24}$/i;
+const PALETTE = ["#d73f3f", "#111111", "#6B7280", "#000000"];
+
+const state = {
+  map: null,
+  pre: null,
+  post: null,
+  sideBySide: null,
+  overlays: [],
+  swatchIndex: 0,
+  modalSide: "pre",
+  vantorEvents: null,
+  vantorScenesCache: {},
+  hoverRect: null,
+  aoiDrawing: false,
+};
+
+const $ = (id) => document.getElementById(id);
+
+/* ---- misc ---- */
+
+function status(msg, ms = 2200, kind) {
+  const el = $("status");
+  el.textContent = msg;
+  el.className = "on" + (kind ? " " + kind : "");
+  clearTimeout(status._t);
+  if (ms) status._t = setTimeout(() => el.className = "", ms);
+}
+
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function titilerUrl(cogUrl) { return `${TITILER}?url=${encodeURIComponent(cogUrl)}`; }
+
+/* ---- hover footprint on the map ---- */
+
+function showHoverFootprint(bbox) {
+  if (!bbox || bbox.length !== 4) return;
+  hideHoverFootprint();
+  const [w, s, e, n] = bbox;
+  // Force SVG for the hover / AOI vectors so they render crisp lines even though the map
+  // uses a canvas renderer for overlay-heavy geojson performance.
+  state.hoverRect = L.rectangle([[s, w], [n, e]], {
+    color: "#d73f3f", weight: 2, dashArray: "4 3", fill: false,
+    interactive: false, renderer: L.svg(),
+  }).addTo(state.map);
+}
+function hideHoverFootprint() {
+  if (state.hoverRect) { state.map.removeLayer(state.hoverRect); state.hoverRect = null; }
+}
+function wireHoverRect(row, bbox) {
+  if (!bbox) return;
+  row.addEventListener("mouseenter", () => showHoverFootprint(bbox));
+  row.addEventListener("mouseleave", hideHoverFootprint);
+}
+
+/* ---- AOI ---- */
+
+function firstGeom(geojson) {
+  if (!geojson) return null;
+  if (geojson.type === "FeatureCollection") return geojson.features?.[0]?.geometry ?? null;
+  if (geojson.type === "Feature") return geojson.geometry ?? null;
+  if (geojson.type === "Polygon" || geojson.type === "MultiPolygon") return geojson;
+  return null;
+}
+
+function geometryBbox(geom) {
+  let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity;
+  const polys = geom.type === "MultiPolygon" ? geom.coordinates
+    : geom.type === "Polygon" ? [geom.coordinates] : [];
+  for (const poly of polys) for (const ring of poly) for (const [x, y] of ring) {
+    if (x < w) w = x; if (x > e) e = x; if (y < s) s = y; if (y > n) n = y;
+  }
+  return [w, s, e, n];
+}
+
+/** True when the geom is a single 5-vertex Polygon that traces its own bbox exactly. */
+function isRectanglePolygon(geom) {
+  if (geom?.type !== "Polygon") return false;
+  const ring = geom.coordinates?.[0];
+  if (!ring || ring.length !== 5) return false;
+  const [w, s, e, n] = geometryBbox(geom);
+  const corners = new Set([`${w},${s}`, `${e},${s}`, `${e},${n}`, `${w},${n}`]);
+  const seen = new Set(ring.slice(0, 4).map(([x, y]) => `${x},${y}`));
+  return corners.size === seen.size && [...corners].every((c) => seen.has(c));
+}
+
+
+/**
+ * Draw a rectangle by click-drag on the map: disable normal pan, sample two corners,
+ * project them back to lng/lat, and hand the bbox to setAoi as a synthetic polygon.
+ */
+function startAoiDraw() {
+  if (state.aoiDrawing) return;
+  state.aoiDrawing = true;
+  status("Click and drag on the map to draw AOI", 0);
+  state.map.dragging.disable();
+  state.map.getContainer().style.cursor = "crosshair";
+  let start = null;
+  let rect = null;
+  const onDown = (e) => {
+    start = e.latlng;
+    rect = L.rectangle([start, start], { color: "#d73f3f", weight: 2, fillOpacity: 0.05, dashArray: "6 3", interactive: false, renderer: L.svg() }).addTo(state.map);
+  };
+  const onMove = (e) => { if (rect && start) rect.setBounds([start, e.latlng]); };
+  const onUp = (e) => {
+    if (!start) return;
+    const b = rect.getBounds();
+    state.map.removeLayer(rect);
+    stopAoiDraw();
+    const w = b.getWest(), s = b.getSouth(), e2 = b.getEast(), n = b.getNorth();
+    addOverlayFromJson(
+      "drawn rectangle",
+      { type: "Polygon", coordinates: [[[w, s], [e2, s], [e2, n], [w, n], [w, s]]] },
+    );
+  };
+  const stop = () => stopAoiDraw();
+  state.map.on("mousedown", onDown);
+  state.map.on("mousemove", onMove);
+  state.map.on("mouseup", onUp);
+  state.aoiDrawing = { onDown, onMove, onUp };
+}
+
+function stopAoiDraw() {
+  if (!state.aoiDrawing) return;
+  const { onDown, onMove, onUp } = state.aoiDrawing;
+  state.map.off("mousedown", onDown);
+  state.map.off("mousemove", onMove);
+  state.map.off("mouseup", onUp);
+  state.map.dragging.enable();
+  state.map.getContainer().style.cursor = "";
+  state.aoiDrawing = false;
+  status("", 100);
+}
+
+/* ---- imagery ---- */
+
+/**
+ * Pick the COG asset out of a STAC Item.
+ *
+ * STAC 1.0 allows any asset key. Prefer explicit roles ("visual"/"data"/"image"), then the
+ * conventional key names Vantor and Maxar use, and fall back to the first GeoTIFF.
+ */
+function stacCogAsset(item) {
+  const assets = item?.assets || {};
+  const entries = Object.entries(assets);
+  const isTiff = (a) => (a?.type || "").includes("image/tiff") || /\.tiff?$/i.test(a?.href || "");
+  const byRole = entries.find(([_, a]) => (a.roles || []).some((r) => ["visual", "data", "image"].includes(r)) && isTiff(a));
+  if (byRole) return byRole[1];
+  for (const k of ["visual", "cog", "data", "image", "rgb"]) if (assets[k] && isTiff(assets[k])) return assets[k];
+  const anyTiff = entries.find(([_, a]) => isTiff(a));
+  return anyTiff ? anyTiff[1] : null;
+}
+
+function stacBbox(item) {
+  if (Array.isArray(item?.bbox) && item.bbox.length >= 4) return item.bbox.slice(0, 4);
+  const geom = item?.geometry;
+  if (geom) return geometryBbox(geom);
+  return null;
+}
+
+/** Build a common {kind, cogUrl, title, bbox, meta} source object from a STAC Item. */
+function sourceFromStac(item, fallbackTitle) {
+  const asset = stacCogAsset(item);
+  if (!asset?.href) throw new Error("STAC Item has no COG asset");
+  return {
+    kind: "titiler",
+    cogUrl: asset.href,
+    title: item.id || fallbackTitle || asset.href.split("/").pop(),
+    bbox: stacBbox(item),
+    meta: {
+      datetime: item.properties?.datetime,
+      cloud: item.properties?.["eo:cloud_cover"],
+      nadir: item.properties?.["view:off_nadir"],
+      sun_el: item.properties?.["view:sun_elevation"],
+      gsd: item.properties?.gsd,
+      instrument: item.properties?.instruments,
+      thumb: item.assets?.thumbnail?.href,
+    },
+  };
+}
+
+function looksLikeStac(j) {
+  return j && (j.stac_version || (j.type === "Feature" && j.assets));
+}
+
+async function resolveSource(input) {
+  const trimmed = (input || "").trim();
+  if (!trimmed) throw new Error("empty");
+  // OpenAerialMap catalogue id (24-hex): fetch the catalogue record and use its COG url.
+  // OAM's single-item endpoint returns an empty stub for some records that ARE visible via
+  // the bbox listing, so fall back to a small-bbox search around the map centre and pick
+  // the record whose _id matches.
+  if (OAM_ID_RE.test(trimmed)) {
+    const r = await fetch(OAM_ONE(trimmed));
+    if (r.ok) {
+      const j = await r.json();
+      const cog = j.uuid || j.properties?.uuid;
+      if (cog) return { kind: "titiler", cogUrl: cog, title: j.title || trimmed, bbox: j.bbox };
+    }
+    // Fallback: bbox listing around the current map centre, pick our id out.
+    if (state.map) {
+      const c = state.map.getCenter();
+      const bbox = [c.lng - 0.2, c.lat - 0.2, c.lng + 0.2, c.lat + 0.2].map((n) => n.toFixed(4)).join(",");
+      const list = await fetch(`${OAM_META}?bbox=${bbox}&limit=100`);
+      if (list.ok) {
+        const j = await list.json();
+        const hit = (j.results || []).find((item) => item._id === trimmed);
+        if (hit?.uuid) return { kind: "titiler", cogUrl: hit.uuid, title: hit.title || trimmed, bbox: hit.bbox };
+      }
+    }
+    throw new Error(`OAM entry ${trimmed} has no COG URL (single-item stub, and bbox fallback missed)`);
+  }
+  if (!/^https?:\/\//i.test(trimmed)) throw new Error("not a URL or OAM id");
+  // XYZ tile service URL (has {z}, {x}, {y} placeholders): treat as a direct basemap.
+  if (/\{z\}/.test(trimmed) && /\{x\}/.test(trimmed) && /\{y\}/.test(trimmed)) {
+    const host = trimmed.split("/").slice(2, 3)[0] || trimmed;
+    return { kind: "tms", tileUrl: trimmed, title: host };
+  }
+  // Try STAC first when the URL looks like JSON. If it's not JSON, fall back to raw COG.
+  if (/\.json(\?|$)/i.test(trimmed) || /\/stac\//i.test(trimmed)) {
+    try {
+      const r = await fetch(trimmed);
+      if (r.ok) {
+        const j = await r.json();
+        if (looksLikeStac(j)) return sourceFromStac(j, trimmed.split("/").pop());
+      }
+    } catch (_) { /* fall through to raw treatment */ }
+  }
+  // Localhost/LAN COGs go through the local serve.py rio-tiler XYZ endpoint, never the public titiler.
+  if (/^https?:\/\/(127\.|localhost|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(trimmed)) {
+    const base = new URL(trimmed);
+    const tileUrl = `${base.protocol}//${base.host}/tiles/{z}/{x}/{y}?url=${encodeURIComponent(trimmed)}`;
+    return { kind: "tms", tileUrl, title: trimmed.split("/").pop() || trimmed, maxZoom: 22 };
+  }
+  return { kind: "titiler", cogUrl: trimmed, title: trimmed.split("/").pop() };
+}
+
+function buildLayer(source) {
+  if (source.kind === "titiler") {
+    // Firefox 115+ blocks opaque cross-origin images (ORB); crossOrigin: "anonymous" makes
+    // it a proper CORS request, which titiler.hotosm.org allows.
+    return L.tileLayer(titilerUrl(source.cogUrl), {
+      tileSize: 256, minZoom: 0, maxZoom: 23, crossOrigin: "anonymous",
+    });
+  }
+  if (source.kind === "tms") {
+    return L.tileLayer(source.tileUrl, {
+      tileSize: 256, minZoom: 0, maxZoom: source.maxZoom || 21,
+      crossOrigin: "anonymous", attribution: source.attribution || "",
+      subdomains: source.subdomains || "abc",
+    });
+  }
+  return new GeoRasterLayer({ georaster: source.georaster, resolution: 256, opacity: 1 });
+}
+
+async function makeLocalSource(file) {
+  const buffer = await file.arrayBuffer();
+  const georaster = await parseGeoraster(buffer);
+  return { kind: "local", georaster, title: file.name,
+    bbox: [georaster.xmin, georaster.ymin, georaster.xmax, georaster.ymax] };
+}
+
+function setImagery(side, source) {
+  const prev = state[side];
+  if (prev?.layer) state.map.removeLayer(prev.layer);
+  const layer = buildLayer(source);
+  layer.addTo(state.map);
+  state[side] = { ...source, layer };
+  showChip(side, source.title);
+  refreshComposition();
+  if (source.bbox && source.bbox.length === 4) {
+    const [w, s, e, n] = source.bbox;
+    state.map.fitBounds([[s, w], [n, e]], { padding: [30, 30] });
+  }
+  writeShareUrl();
+}
+
+function clearImagery(side) {
+  const prev = state[side];
+  if (prev?.layer) state.map.removeLayer(prev.layer);
+  state[side] = null;
+  hideChip(side);
+  refreshComposition();
+  writeShareUrl();
+}
+
+function showChip(side, title) {
+  const meta = $(`meta-${side}`);
+  meta.hidden = false;
+  meta.querySelector(".text").textContent = title || "";
+  $(`eyebrow-${side}`).classList.add("loaded");
+}
+function hideChip(side) {
+  $(`meta-${side}`).hidden = true;
+  $(`eyebrow-${side}`).classList.remove("loaded");
+}
+
+/**
+ * Toggle empty-state cards, hairline, and the leaflet-side-by-side divider so the user
+ * sees a coherent state at every stage. The plugin does the actual pixel clip and cancels
+ * map drag while the range input is being dragged, so the map viewport stays put.
+ */
+function refreshComposition() {
+  $("empty-pre").style.display = state.pre ? "none" : "";
+  $("empty-post").style.display = state.post ? "none" : "";
+  const both = !!state.pre && !!state.post;
+  $("hairline").classList.toggle("hidden", both);
+  if (state.sideBySide) { state.map.removeControl(state.sideBySide); state.sideBySide = null; }
+  if (both) {
+    state.sideBySide = L.control.sideBySide(state.pre.layer, state.post.layer).addTo(state.map);
+    ensureGrabHandler();
+  }
+}
+
+/**
+ * Intercept mousedown on the map container BEFORE Leaflet's own drag handler runs.
+ *
+ * Approach: a capture-phase listener on the map container fires first (outermost-to-inner
+ * in capture). If the pointer is within GRAB_PX of the current divider position, we call
+ * stopImmediatePropagation so Leaflet never sees the mousedown and starts a slide instead.
+ * Anywhere else on the map, the event flows through and pan behaviour is unchanged.
+ */
+const GRAB_PX = 30;
+function ensureGrabHandler() {
+  if (state.grabWired) return;
+  state.grabWired = true;
+  const container = state.map.getContainer();
+  container.addEventListener("mousedown", (event) => {
+    if (!state.sideBySide) return;
+    const divider = document.querySelector(".leaflet-sbs-divider");
+    const range = document.querySelector(".leaflet-sbs-range");
+    if (!divider || !range) return;
+    const rect = divider.getBoundingClientRect();
+    const dividerX = rect.left + rect.width / 2;
+    if (Math.abs(event.clientX - dividerX) > GRAB_PX) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    const containerBox = container.getBoundingClientRect();
+    const setFromX = (clientX) => {
+      const val = Math.max(0, Math.min(1, (clientX - containerBox.left) / containerBox.width));
+      range.value = String(val);
+      range.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    setFromX(event.clientX);
+    state.map.dragging.disable();
+    const onMove = (ev) => setFromX(ev.clientX);
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      state.map.dragging.enable();
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, true);  // capture phase, so we run before Leaflet's own bubble-phase drag handler
+}
+
+/* ---- overlays ---- */
+
+/** xView2 semantic palette so damage.geojson auto-colours right without a picker click. */
+const DAMAGE_PALETTE = {
+  "no-damage":        "#21c968",
+  "minor-damage":     "#ffd400",
+  "major-damage":     "#ff8c00",
+  "destroyed":        "#d73f3f",
+  "no-data (no pre)":  "#888888",
+  "no-data (no post)": "#888888",
+  "un-classified":    "#888888",
+};
+
+/** Cycle of accessible hues for unknown categorical attributes. */
+const CATEGORICAL_PALETTE = [
+  "#4e8cff", "#ff8c00", "#21c968", "#e5178c", "#ffd400", "#9d1e6b",
+  "#00c3b8", "#a24bff",
+];
+
+const CATEGORICAL_MAX_UNIQUE = 8;
+/** Below this map zoom, polygon overlays swap to a MarkerCluster of centroids. */
+const CLUSTER_ZOOM_THRESHOLD = 15;
+/** Only cluster when the layer has more than this many features (small layers just stay drawn). */
+const CLUSTER_MIN_FEATURES = 100;
+
+/** String properties (scanned across every feature) with 2..CATEGORICAL_MAX_UNIQUE distinct values. */
+function detectCategoricalAttrs(geojson) {
+  const features = geojson?.type === "FeatureCollection" ? (geojson.features || []) : [geojson];
+  const seen = {};
+  const abandoned = new Set();
+  for (const f of features) {
+    const props = f?.properties || {};
+    for (const [k, v] of Object.entries(props)) {
+      if (abandoned.has(k)) continue;
+      if (typeof v !== "string" || v === "") continue;
+      const set = (seen[k] ||= new Set());
+      set.add(v);
+      if (set.size > CATEGORICAL_MAX_UNIQUE) {
+        abandoned.add(k);
+        delete seen[k];
+      }
+    }
+  }
+  const out = [];
+  for (const [k, vs] of Object.entries(seen)) {
+    if (vs.size >= 2) out.push({ key: k, values: [...vs].sort() });
+  }
+  return out;
+}
+
+/** Per-value colour map: DAMAGE_PALETTE for "damage" with xView2 values, else CATEGORICAL_PALETTE. */
+function buildValueColours(styleBy, values) {
+  const semantic = styleBy === "damage" && values.some((v) => v in DAMAGE_PALETTE);
+  const map = {};
+  for (const [i, v] of values.entries()) {
+    map[v] = semantic ? (DAMAGE_PALETTE[v] || CATEGORICAL_PALETTE[i % CATEGORICAL_PALETTE.length])
+                      : CATEGORICAL_PALETTE[i % CATEGORICAL_PALETTE.length];
+  }
+  return map;
+}
+
+const HIDDEN_STYLE = { stroke: false, fill: false };
+
+/** Mean of the first polygon's exterior ring; good enough for cluster placement. */
+function _firstPolygonCentroid(geom) {
+  if (!geom) return null;
+  let ring;
+  if (geom.type === "Polygon") ring = geom.coordinates[0];
+  else if (geom.type === "MultiPolygon") ring = geom.coordinates[0]?.[0];
+  else return null;
+  if (!ring?.length) return null;
+  let sx = 0, sy = 0;
+  for (const [x, y] of ring) { sx += x; sy += y; }
+  return [sy / ring.length, sx / ring.length];
+}
+
+/** MarkerClusterGroup of polygon centroids; full marker list stashed on `group._allMarkers`. */
+function buildClusterLayer(name, geojson) {
+  const group = L.markerClusterGroup({
+    showCoverageOnHover: false, maxClusterRadius: 60, chunkedLoading: true,
+  });
+  const features = geojson?.type === "FeatureCollection" ? (geojson.features || []) : [geojson];
+  const markers = [];
+  for (const f of features) {
+    const ll = _firstPolygonCentroid(f?.geometry);
+    if (!ll) continue;
+    const m = L.marker(ll);
+    m.feature = f;
+    m.bindPopup(() => {
+      const p = f?.properties || {};
+      const rows = Object.entries(p).slice(0, 20)
+        .map(([k, v]) => `<tr><td style="color:#6B7280;padding-right:10px;white-space:nowrap;font-weight:500;">${escapeHtml(k)}</td><td style="color:#111;">${escapeHtml(v)}</td></tr>`)
+        .join("");
+      return `<div style="min-width:180px;font-family:system-ui,sans-serif;font-size:12px;color:#111;line-height:1.4;">
+        <div style="font-weight:600;font-size:13px;margin-bottom:6px;">${escapeHtml(f?.id || name)}</div>
+        <table style="border-spacing:0;border-collapse:collapse;width:100%;"><tbody>${rows || '<tr><td style="color:#888;">(no properties)</td></tr>'}</tbody></table>
+      </div>`;
+    });
+    markers.push(m);
+  }
+  group._allMarkers = markers;
+  group.addLayers(markers);
+  return group;
+}
+
+/** Rebuild cluster membership so only markers passing `featureVisible` are kept. */
+function refreshClusterMembers(item) {
+  if (!item.cluster) return;
+  const all = item.cluster._allMarkers || [];
+  const keep = all.filter((m) => featureVisible(item, m.feature));
+  item.cluster.clearLayers();
+  item.cluster.addLayers(keep);
+}
+
+/** For each overlay, pick polygon vs cluster layer based on the current map zoom. */
+function refreshClusterVisibility() {
+  const z = state.map.getZoom();
+  for (const item of state.overlays) {
+    if (!item.cluster) continue;
+    if (!item.visible) {
+      state.map.removeLayer(item.cluster);
+      state.map.removeLayer(item.layer);
+      continue;
+    }
+    const wantCluster = z < CLUSTER_ZOOM_THRESHOLD;
+    const clusterOn = state.map.hasLayer(item.cluster);
+    const layerOn = state.map.hasLayer(item.layer);
+    if (wantCluster && !clusterOn) item.cluster.addTo(state.map);
+    if (wantCluster && layerOn) state.map.removeLayer(item.layer);
+    if (!wantCluster && !layerOn) item.layer.addTo(state.map);
+    if (!wantCluster && clusterOn) state.map.removeLayer(item.cluster);
+  }
+}
+
+/** Toggle pointer-events on each sub-layer's DOM node so filtered-out features stop catching clicks. */
+function refreshHitTargets(item) {
+  item.layer.eachLayer((sub) => {
+    const el = sub._path || sub._icon;
+    if (!el) return;
+    el.style.pointerEvents = featureVisible(item, sub.feature) ? "" : "none";
+  });
+}
+
+/** True when the feature passes the active category toggle (Style-by checkboxes). */
+function featureVisible(item, feature) {
+  if (!item.styleBy || !item.hiddenValues?.size) return true;
+  const v = feature?.properties?.[item.styleBy];
+  return !item.hiddenValues.has(String(v));
+}
+
+function styleOverlay(item) {
+  // Light fill keeps the imagery readable; hidden features shortcut to a no-render style.
+  const fallback = item.colour;
+  const paintFor = (colour) => ({
+    color: colour, weight: 2.2, fillOpacity: 0.05, fillColor: colour,
+  });
+  const styleFn = (feature) => {
+    if (!featureVisible(item, feature)) return HIDDEN_STYLE;
+    if (!item.styleBy) return paintFor(fallback);
+    const v = feature?.properties?.[item.styleBy];
+    return paintFor(item.valueColours?.[v] || fallback);
+  };
+  return {
+    style: styleFn,
+    pointToLayer: (feature, ll) => {
+      // Marker always exists; styleFn drives visibility so setStyle can re-show it later.
+      const colour = item.styleBy
+        ? (item.valueColours?.[feature?.properties?.[item.styleBy]] || fallback)
+        : fallback;
+      const base = featureVisible(item, feature)
+        ? { ...paintFor(colour), fillOpacity: 0.7 }
+        : HIDDEN_STYLE;
+      return L.circleMarker(ll, { ...base, radius: 4 });
+    },
+  };
+}
+
+function addOverlayFromJson(name, geojson, colour, sourceUrl) {
+  colour = colour || PALETTE[state.swatchIndex++ % PALETTE.length];
+  const attrs = detectCategoricalAttrs(geojson);
+  // Auto-pick "damage" if present so xView2 layers colour on load; otherwise none by default.
+  const autoStyleBy = attrs.find((a) => a.key === "damage")?.key || null;
+  const item = {
+    name, colour, visible: true,
+    geom: firstGeom(geojson),
+    attrs,
+    styleBy: autoStyleBy,
+    valueColours: null,
+    hiddenValues: new Set(),
+  };
+  if (item.styleBy) {
+    const values = attrs.find((a) => a.key === item.styleBy).values;
+    item.valueColours = buildValueColours(item.styleBy, values);
+  }
+  const layer = L.geoJSON(geojson, styleOverlay(item));
+  layer._sourceUrl = sourceUrl;
+  layer._sourceGeojson = sourceUrl ? null : geojson;
+  layer.bindPopup((l) => {
+    const p = l.feature?.properties || {};
+    const rows = Object.entries(p).slice(0, 20)
+      .map(([k, v]) => `<tr><td style="color:#6B7280;padding-right:10px;white-space:nowrap;font-weight:500;">${escapeHtml(k)}</td><td style="color:#111;">${escapeHtml(v)}</td></tr>`)
+      .join("");
+    return `<div style="min-width:180px;font-family:system-ui,sans-serif;font-size:12px;color:#111;line-height:1.4;">
+      <div style="font-weight:600;font-size:13px;margin-bottom:6px;">${escapeHtml(l.feature?.id || name)}</div>
+      <table style="border-spacing:0;border-collapse:collapse;width:100%;"><tbody>${rows || '<tr><td style="color:#888;">(no properties)</td></tr>'}</tbody></table>
+    </div>`;
+  });
+  item.layer = layer;
+  const featureCount = geojson?.features?.length ?? 0;
+  item.cluster = featureCount > CLUSTER_MIN_FEATURES ? buildClusterLayer(name, geojson) : null;
+  state.overlays.push(item);
+  refreshClusterVisibility();
+  if (!item.cluster) item.layer.addTo(state.map);
+  renderOverlays();
+  writeShareUrl();
+  if (layer._sourceGeojson) {
+    const [w, s, e, n] = geometryBbox(firstGeom(layer._sourceGeojson));
+    if (Number.isFinite(w)) state.map.fitBounds([[s, w], [n, e]], { padding: [30, 30] });
+  }
+}
+
+async function addOverlayFromUrl(url) {
+  try {
+    status(`Loading ${url}`, 0);
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`${r.status}`);
+    const j = await r.json();
+    addOverlayFromJson(url.split("/").pop() || url, j, null, url);
+    status("Overlay added");
+  } catch (exc) { status(`Overlay failed: ${exc.message}`, 3000, "err"); }
+}
+
+function renderOverlays() {
+  const list = $("layers-list");
+  list.innerHTML = "";
+  state.overlays.forEach((item, idx) => {
+    const count = item.layer.getLayers ? item.layer.getLayers().length : 1;
+    const li = document.createElement("li");
+    li.className = "layer-item";
+    // The single-colour swatch is disabled while styleBy is active because feature colour
+    // then derives from the property value.
+    const swatchDisabled = item.styleBy ? "disabled" : "";
+    li.innerHTML = `
+      <input type="checkbox" ${item.visible ? "checked" : ""} title="visible"/>
+      <span class="name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)} <span style="color:var(--muted);">(${count})</span></span>
+      <input type="color" class="swatch" value="${item.colour}" title="colour" ${swatchDisabled}/>
+      <button class="btn danger small" title="Remove"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg></button>`;
+    const [cb, , sw, rm] = li.children;
+    cb.onchange = () => {
+      item.visible = cb.checked;
+      if (item.cluster) refreshClusterVisibility();
+      else if (cb.checked) item.layer.addTo(state.map);
+      else state.map.removeLayer(item.layer);
+    };
+    sw.onchange = () => {
+      item.colour = sw.value;
+      item.layer.setStyle(styleOverlay(item).style);
+      refreshHitTargets(item);
+    };
+    rm.onclick = () => {
+      state.map.removeLayer(item.layer);
+      if (item.cluster) state.map.removeLayer(item.cluster);
+      state.overlays.splice(idx, 1);
+      renderOverlays(); writeShareUrl();
+    };
+    list.appendChild(li);
+
+    // "Style by" row: shows only when the loaded geojson has any categorical attribute.
+    if (item.attrs && item.attrs.length) {
+      const styleRow = document.createElement("li");
+      styleRow.style.cssText = "list-style:none;margin-top:4px;padding:0 8px 8px;display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);";
+      const opts = ['<option value="">— single colour —</option>']
+        .concat(item.attrs.map((a) => `<option value="${escapeHtml(a.key)}"${a.key === item.styleBy ? " selected" : ""}>${escapeHtml(a.key)}</option>`))
+        .join("");
+      styleRow.innerHTML = `<span>Style by</span>
+        <select style="padding:3px 6px;font-size:11px;">${opts}</select>`;
+      const [, sel] = styleRow.children;
+      sel.onchange = () => {
+        item.styleBy = sel.value || null;
+        item.valueColours = null;
+        if (item.styleBy) {
+          const values = item.attrs.find((a) => a.key === item.styleBy).values;
+          item.valueColours = buildValueColours(item.styleBy, values);
+        }
+        item.layer.setStyle(styleOverlay(item).style);
+        refreshHitTargets(item);
+        refreshClusterMembers(item);
+        renderOverlays();
+      };
+      list.appendChild(styleRow);
+
+      // Each swatch is a checkbox toggling features of that value.
+      if (item.styleBy && item.valueColours) {
+        const legend = document.createElement("li");
+        legend.style.cssText = "list-style:none;margin:2px 0 8px;padding:0 8px;display:flex;flex-wrap:wrap;gap:6px 10px;font-size:11px;color:var(--ink);";
+        Object.entries(item.valueColours).forEach(([v, c]) => {
+          const chip = document.createElement("label");
+          chip.style.cssText = "display:inline-flex;align-items:center;gap:4px;cursor:pointer;user-select:none;";
+          const checked = !item.hiddenValues.has(String(v));
+          chip.innerHTML = `<input type="checkbox" ${checked ? "checked" : ""} style="margin:0;"/><span style="width:10px;height:10px;background:${c};border:1px solid rgba(0,0,0,.15);border-radius:2px;display:inline-block;"></span>${escapeHtml(v)}`;
+          const cb = chip.firstChild;
+          cb.onchange = () => {
+            if (cb.checked) item.hiddenValues.delete(String(v));
+            else item.hiddenValues.add(String(v));
+            item.layer.setStyle(styleOverlay(item).style);
+            refreshHitTargets(item);
+            refreshClusterMembers(item);
+          };
+          legend.appendChild(chip);
+        });
+        list.appendChild(legend);
+      }
+    }
+
+  });
+  const badge = $("layers-count");
+  badge.textContent = state.overlays.length;
+  badge.hidden = state.overlays.length === 0;
+}
+
+/* ---- modal ---- */
+
+function openModal(side) {
+  state.modalSide = side;
+  $("modal-side").textContent = side;
+  $("modal").classList.add("on");
+  $("smart-input").value = "";
+  $("results-box").innerHTML = `<div style="color:var(--muted);font-size:12px;">Paste a URL, type a place, or hit a browse button.</div>`;
+  $("vantor-picker").hidden = true;
+  $("browse-hint").textContent = "";
+  if (state.vantorEvents == null) loadVantorEvents();
+}
+function closeModal() { $("modal").classList.remove("on"); }
+
+/**
+ * Route whatever the user typed or pasted through the right handler:
+ *  - 24-hex OAM id      -> resolve + apply
+ *  - https://.../*.json -> STAC Item -> extract asset -> apply
+ *  - https://.../*.tif  -> raw COG -> apply
+ *  - anything else      -> treat as a place name -> geocode + OAM search
+ */
+async function smartResolve() {
+  const raw = $("smart-input").value.trim();
+  if (!raw) return;
+  if (OAM_ID_RE.test(raw) || /^https?:\/\//i.test(raw)) {
+    try {
+      setImagery(state.modalSide, await resolveSource(raw));
+      closeModal();
+    } catch (exc) { status(exc.message, 3000, "err"); }
+    return;
+  }
+  // Otherwise: geocode + OAM search
+  status(`Geocoding ${raw}`, 0);
+  try {
+    const r = await fetch(`${NOMINATIM}?format=jsonv2&limit=1&q=${encodeURIComponent(raw)}`);
+    const g = await r.json();
+    if (!g.length) { status(`No place named ${raw}`, 3000, "err"); return; }
+    const [south, north, west, east] = g[0].boundingbox.map(Number);
+    state.map.fitBounds([[south, west], [north, east]]);
+    await oamSearchBbox([west, south, east, north], $("results-box"));
+    $("browse-hint").textContent = `over ${g[0].display_name}`;
+  } catch (exc) { status(`Geocode: ${exc.message}`, 3000, "err"); }
+}
+
+/* ---- OAM search ---- */
+
+async function oamSearchView() {
+  const b = state.map.getBounds();
+  const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+  await oamSearchBbox(bbox, $("results-box"));
+}
+async function oamSearchBbox(bbox, target) {
+  status("Searching OAM", 0);
+  try {
+    const r = await fetch(`${OAM_META}?bbox=${bbox.map((n) => n.toFixed(4)).join(",")}&limit=40`);
+    if (!r.ok) throw new Error(`${r.status}`);
+    const j = await r.json();
+    renderOamResults(j.results || [], target);
+    status(`${(j.results || []).length} results`);
+  } catch (exc) { status(`OAM search failed: ${exc.message}`, 3000, "err"); }
+}
+function renderOamResults(items, target) {
+  if (items.length === 0) { target.innerHTML = `<div style="color:var(--muted);font-size:12px;">No imagery here.</div>`; return; }
+  target.innerHTML = "";
+  for (const item of items) {
+    const thumb = item.thumbnail || item.properties?.thumbnail || "";
+    const row = document.createElement("div");
+    row.className = "result";
+    row.innerHTML = `
+      <img class="thumb" src="${escapeHtml(thumb)}" alt=""/>
+      <div>
+        <div class="name" title="${escapeHtml(item.title || "")}">${escapeHtml(item.title || item._id)}</div>
+        <div class="subs">${escapeHtml((item.acquisition_start || "").slice(0, 10))} · gsd ${(+item.gsd || 0).toFixed(2)} m · ${escapeHtml(item.provider || "")}</div>
+      </div>
+      <button class="btn primary small">Use</button>`;
+    row.querySelector("button").onclick = async () => {
+      try {
+        setImagery(state.modalSide, await resolveSource(item._id));
+        closeModal();
+      } catch (exc) { status(exc.message, 3000, "err"); }
+    };
+    wireHoverRect(row, item.bbox);
+    target.appendChild(row);
+  }
+}
+
+/* ---- Vantor ---- */
+
+async function loadVantorEvents() {
+  const sel = $("vantor-event");
+  sel.innerHTML = "<option value=''>Loading events</option>";
+  try {
+    const xml = await (await fetch(`${VANTOR_ROOT}?list-type=2&prefix=events/&delimiter=/`)).text();
+    const prefixes = [...xml.matchAll(/<Prefix>([^<]+)<\/Prefix>/g)].map((m) => m[1]).filter((p) => p !== "events/");
+    const events = await Promise.all(prefixes.map(async (prefix) => {
+      try {
+        const j = await (await fetch(`${VANTOR_ROOT}${prefix}event.json`)).json();
+        return { prefix, title: j.properties?.title || prefix, geometry: j.geometry };
+      } catch { return { prefix, title: prefix }; }
+    }));
+    state.vantorEvents = events;
+    sel.innerHTML = "";
+    for (const ev of events) {
+      const o = document.createElement("option");
+      o.value = ev.prefix; o.textContent = ev.title;
+      sel.appendChild(o);
+    }
+    sel.onchange = () => loadVantorEvent(sel.value);
+    const c = state.map.getCenter();
+    const pick = events.find((ev) => geometryContains(ev.geometry, c.lng, c.lat)) || events[0];
+    if (pick) { sel.value = pick.prefix; await loadVantorEvent(pick.prefix); }
+  } catch (exc) {
+    sel.innerHTML = "<option value=''>failed to list</option>";
+    status(`Vantor list failed: ${exc.message}`, 3000, "err");
+  }
+}
+function geometryContains(geom, lng, lat) {
+  if (!geom) return false;
+  const polys = geom.type === "MultiPolygon" ? geom.coordinates
+    : geom.type === "Polygon" ? [geom.coordinates] : [];
+  for (const poly of polys) {
+    const ring = poly[0];
+    let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity;
+    for (const [x, y] of ring) { if (x < w) w = x; if (x > e) e = x; if (y < s) s = y; if (y > n) n = y; }
+    if (lng >= w && lng <= e && lat >= s && lat <= n) return true;
+  }
+  return false;
+}
+async function loadVantorEvent(prefix) {
+  const box = $("results-box");
+  box.innerHTML = `<div style="color:var(--muted);font-size:12px;">Loading scenes for ${escapeHtml(prefix)}</div>`;
+  let scenes = state.vantorScenesCache[prefix];
+  if (!scenes) {
+    try {
+      const xml = await (await fetch(`${VANTOR_ROOT}?list-type=2&prefix=${encodeURIComponent(prefix)}`)).text();
+      const keys = [...xml.matchAll(/<Key>([^<]+)<\/Key>/g)].map((m) => m[1]).filter((k) => k.endsWith(".tif"));
+      scenes = await Promise.all(keys.map(async (key) => {
+        const stem = key.replace(/\.tif$/, "");
+        try {
+          const item = await (await fetch(`${VANTOR_ROOT}${stem}.json`)).json();
+          // Prefer the STAC visual asset's href (canonical) and the STAC thumbnail asset.
+          const cogAsset = stacCogAsset(item);
+          const cogUrl = cogAsset?.href || `${VANTOR_ROOT}${key}`;
+          return {
+            id: item.id || stem.split("/").pop(),
+            url: cogUrl,
+            bbox: stacBbox(item),
+            date: (item.properties?.datetime || "").slice(0, 10),
+            gsd: item.properties?.gsd,
+            nadir: item.properties?.["view:off_nadir"],
+            cloud: item.properties?.["eo:cloud_cover"],
+            sun: item.properties?.["view:sun_elevation"],
+            thumb: item.assets?.thumbnail?.href || null,
+          };
+        } catch { return { id: stem.split("/").pop(), url: `${VANTOR_ROOT}${key}`, bbox: null }; }
+      }));
+      state.vantorScenesCache[prefix] = scenes;
+    } catch (exc) {
+      box.innerHTML = `<div style="color:var(--muted);font-size:12px;">Failed: ${escapeHtml(exc.message)}</div>`;
+      return;
+    }
+  }
+  renderVantorScenes(scenes);
+}
+function bboxOverlaps(a, b) { return a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]; }
+
+function renderBasemaps() {
+  const box = $("results-box");
+  box.innerHTML = "";
+  for (const b of BASEMAPS) {
+    const row = document.createElement("div");
+    row.className = "result";
+    row.innerHTML = `
+      <div class="thumb" style="display:grid;place-items:center;font:600 10px/1 var(--sans);color:#888;">${escapeHtml(b.title.split(" ")[0])}</div>
+      <div>
+        <div class="name">${escapeHtml(b.title)}</div>
+        <div class="subs">${escapeHtml(b.attribution || "")}</div>
+      </div>
+      <button class="btn primary small">Use</button>`;
+    row.querySelector("button").onclick = () => {
+      setImagery(state.modalSide, {
+        kind: "tms", tileUrl: b.tileUrl, title: b.title,
+        maxZoom: b.maxZoom, subdomains: b.subdomains, attribution: b.attribution,
+      });
+      closeModal();
+    };
+    box.appendChild(row);
+  }
+}
+function renderVantorScenes(scenes) {
+  const box = $("results-box");
+  const inView = $("vantor-in-view").checked;
+  const b = state.map.getBounds();
+  const bounds = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+  const filtered = inView
+    ? scenes.filter((s) => s.bbox && bboxOverlaps(s.bbox, bounds))
+    : scenes;
+  filtered.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  if (filtered.length === 0) {
+    box.innerHTML = `<div style="color:var(--muted);font-size:12px;">${scenes.length} scenes in this event, none over the current view. Untick "only in view" to see all.</div>`;
+    return;
+  }
+  box.innerHTML = "";
+  for (const s of filtered) {
+    const row = document.createElement("div");
+    row.className = "result";
+    // STAC thumbnail asset is the fastest path; titiler preview is a fallback if the STAC
+    // Item did not declare one.
+    const thumbSrc = s.thumb || titilerPreviewUrl(s.url);
+    row.innerHTML = `
+      <img class="thumb" loading="lazy" src="${escapeHtml(thumbSrc)}" alt=""/>
+      <div>
+        <div class="name">${escapeHtml(s.id)}</div>
+        <div class="subs">${escapeHtml(s.date || "?")}${s.nadir != null ? " · nadir " + (+s.nadir).toFixed(1) + "°" : ""}${s.cloud != null ? " · cloud " + s.cloud + "%" : ""}${s.sun != null ? " · sun_el " + (+s.sun).toFixed(0) + "°" : ""}</div>
+      </div>
+      <button class="btn primary small">Use</button>`;
+    row.querySelector("button").onclick = () => {
+      setImagery(state.modalSide, { kind: "titiler", cogUrl: s.url, title: s.id, bbox: s.bbox });
+      closeModal();
+    };
+    wireHoverRect(row, s.bbox);
+    box.appendChild(row);
+  }
+}
+
+
+/* ---- share ---- */
+
+/** Cap for inline layer/AOI JSON in the URL; anything bigger is skipped with a warning. */
+const INLINE_JSON_MAX = 8000;
+
+/**
+ * Build a shareable URL that reproduces the current view.
+ *
+ * Encoded slots:
+ *   pre / post   COG URL, or omitted for a local .tif drop (cannot be encoded)
+ *   layer        repeated: URL for fetched overlays; geo:<json> for small local drops
+ *   aoi          URL from paste, bbox:W,S,E,N for a drawn rectangle, geo:<json> for a drop
+ *   center       lat,lon,zoom
+ *   event        the top-bar event label
+ *
+ * Anything that could not be encoded is reported via `state.unshareable` so the share
+ * popover can list it plainly rather than pretending the URL is complete.
+ */
+function writeShareUrl() {
+  const params = new URLSearchParams();
+  const skipped = [];
+
+  for (const side of ["pre", "post"]) {
+    const s = state[side];
+    if (!s) continue;
+    if (s.cogUrl) params.set(side, s.cogUrl);
+    else skipped.push(`${side} (local file: ${s.title || "unknown"})`);
+  }
+
+  for (const o of state.overlays) {
+    if (o.layer._sourceUrl) { params.append("layer", o.layer._sourceUrl); continue; }
+    const raw = o.layer._sourceGeojson;
+    if (!raw) continue;
+    // Drawn rectangles are polygons that trace their own bbox exactly: encode as bbox for a
+    // shorter URL. Everything else goes inline as `geo:` if it fits under the size cap.
+    if (isRectanglePolygon(o.geom)) {
+      const [w, s, e, n] = geometryBbox(o.geom);
+      params.append("layer", `bbox:${w.toFixed(6)},${s.toFixed(6)},${e.toFixed(6)},${n.toFixed(6)}`);
+      continue;
+    }
+    const encoded = "geo:" + encodeURIComponent(JSON.stringify(raw));
+    if (encoded.length <= INLINE_JSON_MAX) params.append("layer", encoded);
+    else skipped.push(`overlay "${o.name}" (${Math.round(encoded.length / 1024)} KB, too large to encode in a URL)`);
+  }
+
+  const c = state.map?.getCenter();
+  const z = state.map?.getZoom();
+  if (c && z != null) params.set("center", `${c.lat.toFixed(5)},${c.lng.toFixed(5)},${z.toFixed(1)}`);
+  const ev = $("event-name").textContent;
+  if (ev && ev !== "not set") params.set("event", ev);
+
+  state.unshareable = skipped;
+  $("share-url").value = `${location.origin}${location.pathname}?${params}`;
+  renderShareWarning();
+}
+
+function renderShareWarning() {
+  const el = $("share-warning");
+  if (!el) return;
+  if (!state.unshareable?.length) { el.hidden = true; el.textContent = ""; return; }
+  el.hidden = false;
+  el.innerHTML = `<strong style="color:var(--red);">Not in this URL:</strong><ul style="margin:6px 0 0 18px;padding:0;">${
+    state.unshareable.map((s) => `<li>${escapeHtml(s)}</li>`).join("")
+  }</ul>`;
+}
+
+/* ---- drop zones ---- */
+
+function wireDropZones() {
+  for (const el of document.querySelectorAll("[data-drop-raster]")) {
+    const side = el.dataset.side;
+    wireDrop(el, async (files) => {
+      for (const file of files) {
+        if (!/\.tiff?$/i.test(file.name)) continue;
+        try { status(`Loading ${file.name}`, 0); setImagery(side, await makeLocalSource(file)); status(`${side}: ${file.name}`); }
+        catch (exc) { status(exc.message, 3000, "err"); }
+      }
+    });
+  }
+  for (const el of document.querySelectorAll("[data-drop-geojson]")) {
+    wireDrop(el, async (files) => {
+      for (const file of files) {
+        if (!/\.(geo)?json$/i.test(file.name)) continue;
+        try { addOverlayFromJson(file.name, JSON.parse(await file.text())); }
+        catch (exc) { status(`GeoJSON parse: ${exc.message}`, 3000, "err"); }
+      }
+    });
+  }
+}
+function wireDrop(el, handler) {
+  el.addEventListener("dragover", (e) => { e.preventDefault(); el.classList.add("hover"); });
+  el.addEventListener("dragleave", () => el.classList.remove("hover"));
+  el.addEventListener("drop", async (e) => {
+    e.preventDefault(); el.classList.remove("hover");
+    await handler([...(e.dataTransfer?.files || [])]);
+  });
+}
+
+/* ---- boot ---- */
+
+function boot() {
+  state.map = L.map("map", { zoomControl: false, preferCanvas: true, attributionControl: false })
+    .setView([4.815, -75.7], 13);
+  // Zoom control at bottom-left so it never fights the pre/post chips at top or the
+  // rectangle a user drags to set the AOI.
+  L.control.zoom({ position: "bottomleft" }).addTo(state.map);
+  // Expose for end-to-end testing hooks; the app itself never reads this back.
+  window._ddaMap = state.map;
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 20, attribution: "&copy; OpenStreetMap",
+  }).addTo(state.map);
+  L.control.attribution({ position: "bottomleft" }).addTo(state.map);
+  state.map.on("moveend zoomend", writeShareUrl);
+  state.map.on("zoomend", refreshClusterVisibility);
+
+  document.querySelectorAll("[data-open-modal]").forEach((btn) => {
+    btn.onclick = () => openModal(btn.dataset.side);
+  });
+  document.querySelectorAll(".meta").forEach((meta) => {
+    const side = meta.classList.contains("pre") ? "pre" : "post";
+    meta.title = "Click to change imagery";
+    meta.onclick = (e) => {
+      // Clear button lives inside the chip; catch that click first, otherwise treat any
+      // click on the chip as "open the same imagery modal again".
+      if (e.target.classList.contains("clear")) { e.stopPropagation(); clearImagery(side); return; }
+      openModal(side);
+    };
+  });
+  $("modal-close").onclick = closeModal;
+  $("modal").onclick = (e) => { if (e.target === $("modal")) closeModal(); };
+
+  $("smart-go").onclick = smartResolve;
+  $("smart-input").addEventListener("keydown", (e) => { if (e.key === "Enter") smartResolve(); });
+  $("browse-oam").onclick = () => {
+    $("vantor-picker").hidden = true;
+    $("browse-hint").textContent = "in current view / AOI";
+    oamSearchView();
+  };
+  $("browse-vantor").onclick = () => {
+    $("vantor-picker").hidden = false;
+    $("browse-hint").textContent = "Vantor open data";
+    if (state.vantorEvents == null) loadVantorEvents();
+    else {
+      const p = $("vantor-event").value;
+      if (p && state.vantorScenesCache[p]) renderVantorScenes(state.vantorScenesCache[p]);
+    }
+  };
+  $("browse-basemaps").onclick = () => {
+    $("vantor-picker").hidden = true;
+    $("browse-hint").textContent = "Global basemaps";
+    renderBasemaps();
+  };
+  $("vantor-in-view").onchange = () => {
+    const p = $("vantor-event").value;
+    if (p && state.vantorScenesCache[p]) renderVantorScenes(state.vantorScenesCache[p]);
+  };
+
+  $("btn-layers").onclick = () => $("layers-sheet").classList.toggle("on");
+  $("layers-close").onclick = () => $("layers-sheet").classList.remove("on");
+  $("layer-add").onclick = () => {
+    const url = $("layer-input").value.trim();
+    if (url) addOverlayFromUrl(url);
+  };
+  $("layer-draw").onclick = startAoiDraw;
+  $("btn-share").onclick = (e) => {
+    e.stopPropagation();
+    writeShareUrl();
+    $("share-popover").classList.toggle("on");
+  };
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#share-popover") && !e.target.closest("#btn-share")) {
+      $("share-popover").classList.remove("on");
+    }
+  });
+  $("share-copy").onclick = () => {
+    $("share-url").select();
+    navigator.clipboard.writeText($("share-url").value).then(() => status("URL copied"));
+  };
+
+  wireDropZones();
+  applyUrlParams();
+  refreshComposition();
+}
+
+async function applyUrlParams() {
+  const params = new URLSearchParams(location.search);
+  const ev = params.get("event");
+  if (ev) $("event-name").textContent = ev;
+  const center = params.get("center");
+  if (center) {
+    const [lat, lng, z] = center.split(",").map(Number);
+    if ([lat, lng, z].every(Number.isFinite)) state.map.setView([lat, lng], z);
+  }
+  for (const side of ["pre", "post"]) {
+    const val = params.get(side);
+    if (!val) continue;
+    try { setImagery(side, await resolveSource(val)); }
+    catch (exc) { status(`${side} param: ${exc.message}`, 5000, "err"); }
+  }
+  for (const spec of params.getAll("layer")) {
+    if (spec.startsWith("bbox:")) {
+      const [w, s, e, n] = spec.slice(5).split(",").map(Number);
+      if ([w, s, e, n].every(Number.isFinite)) addOverlayFromJson(
+        "drawn rectangle",
+        { type: "Polygon", coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] },
+      );
+      continue;
+    }
+    if (spec.startsWith("geo:")) {
+      try { addOverlayFromJson("inline layer", JSON.parse(decodeURIComponent(spec.slice(4)))); }
+      catch (exc) { status(`Inline layer: ${exc.message}`, 5000, "err"); }
+      continue;
+    }
+    try {
+      const r = await fetch(spec);
+      if (!r.ok) throw new Error(`${r.status}`);
+      addOverlayFromJson(spec.split("/").pop() || spec, await r.json(), null, spec);
+    } catch (exc) { status(`Layer ${spec}: ${exc.message}`, 5000, "err"); }
+  }
+  // Legacy compatibility: an old shared URL may still carry ?aoi=..., which we now treat
+  // as just another layer.
+  const legacyAoi = params.get("aoi");
+  if (legacyAoi) {
+    const clone = new URLSearchParams();
+    clone.append("layer", legacyAoi);
+    for (const spec of clone.getAll("layer")) {
+      if (spec.startsWith("bbox:")) {
+        const [w, s, e, n] = spec.slice(5).split(",").map(Number);
+        if ([w, s, e, n].every(Number.isFinite)) addOverlayFromJson(
+          "shared bbox",
+          { type: "Polygon", coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] },
+        );
+      }
+    }
+  }
+  writeShareUrl();
+}
+
+document.addEventListener("DOMContentLoaded", boot);
+</script>
+</body>
+</html>

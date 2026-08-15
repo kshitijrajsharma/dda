@@ -18,16 +18,14 @@ def _onehot_pixels(class_counts: dict[int, int]) -> np.ndarray:
 
 def test_percentile_keeps_local_damage_that_mean_dilutes():
     pix = _onehot_pixels({0: 5, 3: 5})  # half intact, half destroyed
-    cls_pct, _ = _pool_one(pix, "percentile", 80.0)
-    cls_mean, _ = _pool_one(pix, "mean", 80.0)
+    cls_pct = _pool_one(pix, "percentile", 80.0)
+    cls_mean = _pool_one(pix, "mean", 80.0)
     assert cls_pct > cls_mean
 
 
 def test_uniform_region_class():
     pix = _onehot_pixels({2: 20})
-    cls, agg = _pool_one(pix, "percentile", 80.0)
-    assert cls == 2
-    assert agg.argmax() == 2
+    assert _pool_one(pix, "percentile", 80.0) == 2
 
 
 def test_assign_damage_uniform_and_nodata():
@@ -43,7 +41,7 @@ def test_assign_damage_uniform_and_nodata():
 
     out = assign_damage(prob, transform, "EPSG:3857", buildings, pool_op="percentile", percentile=80.0)
     assert out.iloc[0]["damage"] == "destroyed"
-    assert out.iloc[0]["confidence"] > 0.9
+    assert out.iloc[0]["damage_confidence"] > 0.9
     assert out.iloc[1]["damage_class"] == -1
-    assert bool(out.iloc[1]["review"]) is True
-    assert {"p_no_damage", "p_destroyed"}.issubset(out.columns)
+    assert np.isnan(out.iloc[1]["damage_confidence"])
+    assert set(out.columns) == {"damage_class", "damage", "damage_confidence", "geometry"}

@@ -1,6 +1,5 @@
-# Colombia Earthquake (August 2026), Pereira metro damage assessment.
-# Run: dda run --config conf/colombia_eq.yaml
-# Resume: dda run --config conf/colombia_eq.yaml -s <stage>
+# Colombia Earthquake 2026-08, Pereira metro damage assessment.
+# Run: dda run --config conf/colombia_eq.yaml   (resume: -s <stage>)
 
 area: colombia_eq_pereira
 outputs_root: outputs
@@ -8,26 +7,27 @@ outputs_root: outputs
 aoi: aoi_columbia.geojson
 tm_aoi_project: null
 
-pre_img: https://oin-hotosm-temp.s3.us-east-1.amazonaws.com/6a7cb2bef7b084f6608726ad/0/6a7cb2bef7b084f6608726ae.tif
-post_img: https://oin-hotosm-temp.s3.us-east-1.amazonaws.com/6a7cb280f7b084f660872669/0/6a7cb280f7b084f66087266a.tif
+# post: OAM LG01 B110001101025510, 0.42 m GSD, ~35deg nadir. pre: ESRI (near-nadir).
+pre_img: https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}
+post_img: https://oin-hotosm-temp.s3.us-east-1.amazonaws.com/6a7ec803da08cdce40344eeb/0/6a7ec803da08cdce40344eec.tif
 zoom: 19
 photometric_calibration: true
 stretch_percentiles: true
-keep_raw: false
+keep_raw: true
 
 buildings:
   source: fair
-  ckpt: null
+  ckpt: outputs/colombia_eq_pereira/fs_buildings/ckpts/ft-07-0.6295.ckpt
   fewshot:
-    tm_projects: [61749]
-    imagery_tms_override: null
+    tm_projects: [61914, 61749]
+    imagery_tms_override: https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}
     hpo_trials: 8
     hpo_seeds: 1
     epochs: 10
     val_frac: 0.3
     patience: 3
     lr: 5.0e-5
-    zoom: 19
+    zoom: 18
 
 damage:
   ckpt: null

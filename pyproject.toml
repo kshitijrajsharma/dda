@@ -17,9 +17,11 @@ dependencies = [
     "onnx>=1.17",
     "onnxruntime>=1.18",
     "onnxscript>=0.7.0",
+    "opencv-python-headless>=4.10",
     "optuna>=4.9.0",
     "pillow>=12.2.0",
     "rasterio>=1.5.0",
+    "rio-tiler>=9.4.2",
     "scikit-image>=0.24",
     "scipy>=1.13",
     "segmentation-models-pytorch>=0.4",
@@ -60,7 +62,7 @@ explicit = true
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu118", marker = "sys_platform == 'linux'" }]
 torchvision = [{ index = "pytorch-cu118", marker = "sys_platform == 'linux'" }]
-dinov3-hot = { git = "https://github.com/kshitijrajsharma/dinov3-hot-ablation.git", rev = "d5971c4" }
+dinov3-hot = { git = "https://github.com/kshitijrajsharma/dinov3-hot-ablation.git", rev = "d065b10" }
 
 [tool.ruff]
 line-length = 110

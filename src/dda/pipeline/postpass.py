@@ -1,8 +1,4 @@
-"""Fetch OSM building footprints via Geofabrik's PostPass (SQL-backed, GeoJSON output).
-
-Distinct from Overpass. Output schema matches `buildings.py` so downstream `damage` is agnostic
-to whether footprints came from fAIr detection or from OSM.
-"""
+"""Fetch OSM building footprints via Geofabrik's PostPass; output schema matches `buildings.py`."""
 
 import json
 import logging
@@ -53,8 +49,7 @@ def fetch_postpass_buildings(aoi_geojson: Path, out_geojson: Path, timeout: int 
             "geometry": shape(feat["geometry"]).__geo_interface__,
             "properties": {
                 "id": i,
-                "class": 1,
-                "score": 1.0,
+                "building_confidence": 1.0,
                 "source": "osm",
                 "osm_id": (feat.get("properties") or {}).get("osm_id"),
             },
@@ -66,6 +61,7 @@ def fetch_postpass_buildings(aoi_geojson: Path, out_geojson: Path, timeout: int 
     gdf = gpd.GeoDataFrame.from_features(fc, crs="EPSG:4326")
     inside = gdf[gdf.intersects(aoi.union_all())].reset_index(drop=True)
     out_geojson.parent.mkdir(parents=True, exist_ok=True)
-    inside[["id", "class", "score", "source", "osm_id", "geometry"]].to_file(out_geojson, driver="GeoJSON")
+    cols = ["id", "building_confidence", "source", "osm_id", "geometry"]
+    inside[cols].to_file(out_geojson, driver="GeoJSON")
     log.info("wrote %d OSM buildings -> %s", len(inside), out_geojson)
     return out_geojson

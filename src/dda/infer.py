@@ -179,7 +179,6 @@ def predict_damage(
         buildings,
         pool_op=cfg.pool_op,
         percentile=cfg.pool_percentile,
-        confidence_threshold=cfg.confidence_threshold,
     )
 
     out_geojson = Path(out_geojson)

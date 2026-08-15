@@ -12,6 +12,7 @@ from dda.pipeline.fewshot_damage import FewshotDamageResult, fit_damage
 
 log = logging.getLogger(__name__)
 
+
 __all__ = [
     "FewshotBuildingsResult",
     "FewshotDamageResult",
@@ -52,13 +53,7 @@ class FewshotBuildingsResult:
 
 
 def _stretch_chip_dir(chips_dir: Path, low: float = 2.0, high: float = 98.0) -> None:
-    """Global 2-98 percentile stretch across all `.tif` chips in `chips_dir`.
-
-    Pixels are aggregated (decimated) from every chip to compute one per-band (low, high)
-    percentile pair, then that same linear scale is applied to every chip. Mirrors the
-    `_apply_percentile_stretch` `dda prepare` runs on the whole `pre_aligned.tif` at inference,
-    so fewshot training chips and inference imagery share the same radiometry.
-    """
+    """Pooled per-band [low, high] percentile stretch applied to every chip in `chips_dir`."""
     import numpy as np
     import rasterio
 
@@ -91,6 +86,14 @@ def _stretch_chip_dir(chips_dir: Path, low: float = 2.0, high: float = 98.0) -> 
         [round(x, 1) for x in lows],
         [round(x, 1) for x in highs],
     )
+    # A pooled spread this tight over real chips is impossible; the TMS returned placeholders.
+    min_spread = 5.0
+    if all((h - lo) < min_spread for lo, h in zip(lows, highs, strict=True)):
+        raise RuntimeError(
+            f"pooled chip 2-98 spread < {min_spread} on every band "
+            f"(lows={[round(x, 1) for x in lows]}, highs={[round(x, 1) for x in highs]}); "
+            f"TMS likely lacks coverage at this zoom, try a coarser one."
+        )
     for tif in tifs:
         with rasterio.open(tif) as src:
             arr = src.read([1, 2, 3]).astype(np.float32)
@@ -106,8 +109,7 @@ def _stretch_chip_dir(chips_dir: Path, low: float = 2.0, high: float = 98.0) -> 
 
 
 def _buildings_config():
-    """dinov3_hot default is ViT-L. Small batch size so few-shot data has enough steps for
-    OneCycleLR to build a valid warmup + anneal schedule. fp32 on non-CUDA hosts."""
+    """dinov3_hot ViT-L config with batch 8 so OneCycleLR has enough steps; fp32 off CUDA."""
     import torch
     from dinov3_hot.config import load_config
 
@@ -210,12 +212,7 @@ def fit_buildings_from_tm(
     hpo_trials: int = HPO_DEFAULT_TRIALS,
     hpo_seeds: int = HPO_DEFAULT_SEEDS,
 ) -> FewshotBuildingsResult:
-    """Fetch AOI + imagery per TM project, download tiles, pull OSM via PostPass, then fit.
-
-    When `hpo_trials > 0` (default): runs Optuna over (lr, weight_decay) with `hpo_seeds` seeds
-    per trial and uses the best config. `--no-hpo` on the CLI sets `hpo_trials=0` which reverts
-    to a single fit with the passed `lr`.
-    """
+    """TM AOI + tile download + PostPass OSM labels, then fit (Optuna when hpo_trials>0)."""
     import asyncio
 
     from geomltoolkits.downloader.tms import download_tiles
@@ -330,13 +327,7 @@ def hpo_buildings(
     n_trials: int = HPO_DEFAULT_TRIALS,
     n_seeds: int = HPO_DEFAULT_SEEDS,
 ) -> HpoResult:
-    """Optuna search over (lr, weight_decay) for the buildings few-shot fit.
-
-    Each trial scores by mean val_iou_finetuned across `n_seeds` random splits (removes
-    lucky-split noise on tiny datasets). Fails safe: if the best trial's mean IoU falls below
-    the pretrained baseline, the returned result has `use_pretrained_instead=True` — the caller
-    should keep the pretrained checkpoint rather than shipping a worse fine-tune.
-    """
+    """Optuna (lr, weight_decay) search scored by mean val_iou_finetuned across n_seeds splits."""
     import statistics
 
     import optuna
@@ -362,7 +353,6 @@ def hpo_buildings(
         for seed_i in range(n_seeds):
             cfg = _buildings_config()
             cfg.seed = 42 + seed_i
-            cfg.weight_decay = wd
             trial_out = trials_dir / f"t{trial.number:02d}_s{seed_i}"
             summary = finetune(
                 cfg=cfg,
@@ -372,6 +362,7 @@ def hpo_buildings(
                 out_dir=str(trial_out),
                 val_frac=val_frac,
                 ft_lr=lr,
+                ft_weight_decay=wd,
                 ft_epochs=epochs,
                 ft_patience=patience,
             )
@@ -502,7 +493,6 @@ def fit_buildings_with_config(
 
     pretrained = _resolve_building_ckpt()
     cfg = _buildings_config()
-    cfg.weight_decay = weight_decay
     summary = finetune(
         cfg=cfg,
         pretrained_ckpt=str(pretrained),
@@ -511,6 +501,7 @@ def fit_buildings_with_config(
         out_dir=str(out_dir),
         val_frac=val_frac,
         ft_lr=lr,
+        ft_weight_decay=weight_decay,
         ft_epochs=epochs,
         ft_patience=patience,
     )

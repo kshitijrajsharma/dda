@@ -179,7 +179,6 @@ def _process_block(
             buildings=covered_buildings,
             pool_op=cfg.pool_op,
             percentile=cfg.pool_percentile,
-            confidence_threshold=cfg.confidence_threshold,
         )
 
     merged = pd.concat([scored, no_pre_buildings, no_post_buildings], ignore_index=True)
@@ -209,21 +208,16 @@ def _coverage_fraction(buildings: gpd.GeoDataFrame, valid: np.ndarray, transform
 
 
 def _label_no_data(buildings: gpd.GeoDataFrame, label: str) -> gpd.GeoDataFrame:
-    """Attach no-data columns. `label` distinguishes 'no pre' from 'no post'."""
+    """Attach the no-data class + label; damage_confidence is NaN (model never ran)."""
     out = buildings.copy()
     out["damage_class"] = NO_DATA_CLASS
     out["damage"] = label
-    out["confidence"] = 0.0
-    out["review"] = True
-    for name in DAMAGE_CLASSES:
-        out[f"p_{name.replace('-', '_')}"] = np.nan
+    out["damage_confidence"] = np.nan
     return out
 
 
 def _empty_result(crs) -> gpd.GeoDataFrame:
-    cols = ["damage_class", "damage", "confidence", "review", "geometry"] + [
-        f"p_{n.replace('-', '_')}" for n in DAMAGE_CLASSES
-    ]
+    cols = ["damage_class", "damage", "damage_confidence", "geometry"]
     return gpd.GeoDataFrame({c: [] for c in cols}, geometry="geometry", crs=crs)
 
 
@@ -235,14 +229,13 @@ def _assign_from_prob(
     buildings: gpd.GeoDataFrame,
     pool_op: str,
     percentile: float,
-    confidence_threshold: float,
 ) -> gpd.GeoDataFrame:
-    """Percentile-pool probs inside each footprint, write class + confidence + per-class probs."""
+    """Percentile-pool probs inside each footprint; assign damage_class, damage, damage_confidence."""
     height, width = prob.shape[1:]
     inv = ~transform
     out = buildings.copy()
     ordinal = np.arange(N_DAMAGE_CLASSES)
-    classes, labels, confs, reviews, per_class = [], [], [], [], []
+    classes, labels, confs = [], [], []
 
     for geom in out.geometry:
         minx, miny, maxx, maxy = geom.bounds
@@ -253,9 +246,7 @@ def _assign_from_prob(
         if c1 <= c0 or r1 <= r0:
             classes.append(NO_DATA_CLASS)
             labels.append(NO_DATA_LABEL)
-            confs.append(0.0)
-            reviews.append(True)
-            per_class.append(np.full(N_DAMAGE_CLASSES, np.nan))
+            confs.append(float("nan"))
             continue
         window = Window(c0, r0, c1 - c0, r1 - r0)  # ty: ignore[too-many-positional-arguments]
         win_t = rasterio.windows.transform(window, transform)
@@ -263,26 +254,17 @@ def _assign_from_prob(
         if not inside.any():
             classes.append(NO_DATA_CLASS)
             labels.append(NO_DATA_LABEL)
-            confs.append(0.0)
-            reviews.append(True)
-            per_class.append(np.full(N_DAMAGE_CLASSES, np.nan))
+            confs.append(float("nan"))
             continue
         pix = prob[:, r0:r1, c0:c1][:, inside]
-        cls, agg = _pool_pixels(pix, pool_op, percentile, ordinal)
-        conf = float(pix[cls].mean())
+        cls, _ = _pool_pixels(pix, pool_op, percentile, ordinal)
         classes.append(cls)
         labels.append(DAMAGE_CLASSES[cls])
-        confs.append(conf)
-        reviews.append(conf < confidence_threshold)
-        per_class.append(agg)
+        confs.append(float(pix[cls].mean()))
 
     out["damage_class"] = classes
     out["damage"] = labels
-    out["confidence"] = confs
-    out["review"] = reviews
-    stacked = np.vstack(per_class) if per_class else np.empty((0, N_DAMAGE_CLASSES))
-    for k, name in enumerate(DAMAGE_CLASSES):
-        out[f"p_{name.replace('-', '_')}"] = stacked[:, k]
+    out["damage_confidence"] = confs
     _ = crs
     return out
 
