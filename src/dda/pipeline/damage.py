@@ -21,9 +21,9 @@ from dda.infer import load_model, radiometric_normalize, sliding_window_prob
 log = logging.getLogger(__name__)
 
 NO_DATA_CLASS = -1
-NO_PRE_DATA_LABEL = "no-data (no pre)"
-NO_POST_DATA_LABEL = "no-data (no post)"
-NO_DATA_LABEL = NO_PRE_DATA_LABEL
+NO_DATA_LABEL = "no-data"
+NO_PRE_DATA_LABEL = NO_DATA_LABEL
+NO_POST_DATA_LABEL = NO_DATA_LABEL
 
 
 @dataclass
@@ -97,9 +97,10 @@ def run_damage_blocked(
     out = pd.concat(accum, ignore_index=True) if accum else buildings_in_post.iloc[0:0].copy()
     out = gpd.GeoDataFrame(out, geometry="geometry", crs=post_crs).to_crs(buildings.crs)
     out = out.drop(columns=[c for c in ["centroid_px"] if c in out.columns])
-    out_geojson.parent.mkdir(parents=True, exist_ok=True)
-    out.to_file(out_geojson, driver="GeoJSON")
-    log.info("wrote %d buildings with damage -> %s", len(out), out_geojson)
+    from dda.pipeline.geowrite import write_dual
+
+    write_dual(out, out_geojson)  # ty: ignore[invalid-argument-type]
+    log.info("wrote %d buildings with damage -> %s(.geojson|.parquet)", len(out), out_geojson.with_suffix(""))
     return out_geojson
 
 
@@ -157,7 +158,6 @@ def _process_block(
     valid_mask = pre_ok & post_ok
 
     covered_buildings = block_buildings.loc[valid_mask].copy()
-    # Pre-failure dominates; separate label for post-only gaps lets operators spot mosaic 404s.
     no_pre_buildings = _label_no_data(block_buildings.loc[~pre_ok].copy(), NO_PRE_DATA_LABEL)
     no_post_buildings = _label_no_data(block_buildings.loc[pre_ok & ~post_ok].copy(), NO_POST_DATA_LABEL)
 

@@ -181,8 +181,9 @@ def predict_damage(
         percentile=cfg.pool_percentile,
     )
 
+    from dda.pipeline.geowrite import write_dual
+
     out_geojson = Path(out_geojson)
-    out_geojson.parent.mkdir(parents=True, exist_ok=True)
-    gdf.to_file(out_geojson, driver="GeoJSON")
-    log.info("Wrote %d buildings with damage classes to %s", len(gdf), out_geojson)
+    write_dual(gdf, out_geojson)
+    log.info("Wrote %d buildings with damage -> %s(.geojson|.parquet)", len(gdf), out_geojson.with_suffix(""))
     return out_geojson

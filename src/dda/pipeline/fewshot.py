@@ -52,12 +52,12 @@ class FewshotBuildingsResult:
         }
 
 
-def _stretch_chip_dir(chips_dir: Path, low: float = 2.0, high: float = 98.0) -> None:
-    """Pooled per-band [low, high] percentile stretch applied to every chip in `chips_dir`."""
+def _stretch_chip_dir(chips_dir: Path, low: float = 2.0, high: float = 98.0, prefix: str = "") -> None:
+    """Pooled per-band [low, high] percentile stretch over every `{prefix}*.tif` in `chips_dir`."""
     import numpy as np
     import rasterio
 
-    tifs = sorted(p for p in chips_dir.glob("*.tif") if not p.name.endswith(".aux.xml"))
+    tifs = sorted(p for p in chips_dir.glob(f"{prefix}*.tif") if not p.name.endswith(".aux.xml"))
     if not tifs:
         return
     sample_stride = 4
@@ -86,7 +86,6 @@ def _stretch_chip_dir(chips_dir: Path, low: float = 2.0, high: float = 98.0) -> 
         [round(x, 1) for x in lows],
         [round(x, 1) for x in highs],
     )
-    # A pooled spread this tight over real chips is impossible; the TMS returned placeholders.
     min_spread = 5.0
     if all((h - lo) < min_spread for lo, h in zip(lows, highs, strict=True)):
         raise RuntimeError(
@@ -222,36 +221,28 @@ def fit_buildings_from_tm(
 
     out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-    # geomltoolkits.download_tiles creates `<out>/chips/` internally and writes .tif there.
     tiles_root = out_dir / "tiles"
     tiles_root.mkdir(exist_ok=True)
     chips_dir = tiles_root / "chips"
 
     projects = [fetch_tm_project(pid) for pid in project_ids]
-    imagery_urls = {p.imagery_tms for p in projects if p.imagery_tms}
     if imagery_tms_override:
-        tms_url = imagery_tms_override
-        log.info("fewshot TM: using --imagery-tms override %s", tms_url)
-    elif len(imagery_urls) == 1:
-        tms_url = next(iter(imagery_urls))
-    elif len(imagery_urls) == 0:
-        raise RuntimeError(
-            "None of the requested TM projects have an `imagery` URL configured; "
-            "pass --imagery-tms to specify one manually."
-        )
-    else:
-        raise RuntimeError(
-            f"TM projects declare {len(imagery_urls)} different imagery URLs "
-            f"({sorted(imagery_urls)}); pass --imagery-tms to pick one."
-        )
-
+        log.warning("fewshot TM: forcing --imagery-tms %s (mapper's imagery ignored)", imagery_tms_override)
+    used_projects: list = []
     for proj in projects:
+        proj_tms = imagery_tms_override or proj.imagery_tms
+        if not proj_tms:
+            log.warning(
+                "fewshot TM %d: no usable imagery URL, skipping (set imagery_tms_override to include)",
+                proj.project_id,
+            )
+            continue
         aoi_path = out_dir / f"aoi_tm{proj.project_id}.geojson"
         aoi_path.write_text(json.dumps(proj.aoi))
-        log.info("fewshot TM: downloading tiles for TM %d at z%d -> %s", proj.project_id, zoom, chips_dir)
+        log.info("fewshot TM %d: z%d imagery=%s", proj.project_id, zoom, proj_tms)
         asyncio.run(
             download_tiles(
-                tms=tms_url,
+                tms=proj_tms,
                 zoom=zoom,
                 out=str(tiles_root),
                 geojson=str(aoi_path),
@@ -261,9 +252,13 @@ def fit_buildings_from_tm(
                 extension="tif",
             )
         )
-
-    _stretch_chip_dir(chips_dir)
-    aoi_union = union_aois(projects)
+        _stretch_chip_dir(chips_dir, prefix=f"tm{proj.project_id}-")
+        used_projects.append(proj)
+    if not used_projects:
+        raise RuntimeError(
+            f"None of {project_ids} had usable imagery and no override was set; nothing to train on."
+        )
+    aoi_union = union_aois(used_projects)
     aoi_union_path = out_dir / "aoi_union.geojson"
     aoi_union_path.write_text(json.dumps(aoi_union))
     labels_path = out_dir / "labels.geojson"
@@ -400,8 +395,6 @@ def hpo_buildings(
         HPO_LR_RANGE,
         HPO_WD_RANGE,
     )
-    # Persistent SQLite storage so an interrupted run resumes on the next call instead of
-    # re-running completed trials.
     study_db = out_dir / "hpo_study.db"
     study = optuna.create_study(
         direction="maximize",

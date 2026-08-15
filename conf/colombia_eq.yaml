@@ -17,10 +17,10 @@ keep_raw: true
 
 buildings:
   source: fair
-  ckpt: outputs/colombia_eq_pereira/fs_buildings/ckpts/ft-07-0.6295.ckpt
+  ckpt: null
   fewshot:
     tm_projects: [61914, 61749]
-    imagery_tms_override: https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}
+    imagery_tms_override: null
     hpo_trials: 8
     hpo_seeds: 1
     epochs: 10

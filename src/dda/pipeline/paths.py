@@ -53,8 +53,16 @@ class PipelinePaths:
         return self.root / "buildings.geojson"
 
     @property
+    def buildings_parquet(self) -> Path:
+        return self.root / "buildings.parquet"
+
+    @property
     def damage(self) -> Path:
         return self.root / "damage.geojson"
+
+    @property
+    def damage_parquet(self) -> Path:
+        return self.root / "damage.parquet"
 
     @property
     def review_dir(self) -> Path:

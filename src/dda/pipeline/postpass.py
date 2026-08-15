@@ -60,8 +60,9 @@ def fetch_postpass_buildings(aoi_geojson: Path, out_geojson: Path, timeout: int 
     fc = {"type": "FeatureCollection", "features": features}
     gdf = gpd.GeoDataFrame.from_features(fc, crs="EPSG:4326")
     inside = gdf[gdf.intersects(aoi.union_all())].reset_index(drop=True)
-    out_geojson.parent.mkdir(parents=True, exist_ok=True)
     cols = ["id", "building_confidence", "source", "osm_id", "geometry"]
-    inside[cols].to_file(out_geojson, driver="GeoJSON")
-    log.info("wrote %d OSM buildings -> %s", len(inside), out_geojson)
+    from dda.pipeline.geowrite import write_dual
+
+    write_dual(inside[cols], out_geojson)
+    log.info("wrote %d OSM buildings -> %s(.geojson|.parquet)", len(inside), out_geojson.with_suffix(""))
     return out_geojson

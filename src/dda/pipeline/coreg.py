@@ -19,7 +19,6 @@ DRIFT_DECIMATION = 8
 CHECKERBOARD_BLOCKS = 12
 STRETCH_PCT_LOW = 2.0
 STRETCH_PCT_HIGH = 98.0
-# Below this every-band ceiling, the stretch would blow out real imagery; raise instead.
 STRETCH_HIGH_MIN_SANITY = 128.0
 SIFT_DECIMATION = 8
 SIFT_LOWE_RATIO = 0.75

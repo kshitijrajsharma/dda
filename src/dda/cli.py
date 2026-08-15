@@ -340,6 +340,8 @@ def _run_buildings(args, paths) -> int:
     if args.input:
         import geopandas as gpd
 
+        from dda.pipeline.geowrite import write_dual
+
         gdf = gpd.read_file(args.input).to_crs("EPSG:4326").reset_index(drop=True)
         if "score" in gdf.columns and "building_confidence" not in gdf.columns:
             gdf = gdf.rename(columns={"score": "building_confidence"})
@@ -349,11 +351,11 @@ def _run_buildings(args, paths) -> int:
             gdf["source"] = "user"
         if "id" not in gdf.columns:
             gdf["id"] = range(len(gdf))
-        gdf[["id", "building_confidence", "source", "geometry"]].to_file(paths.buildings, driver="GeoJSON")
+        write_dual(gdf[["id", "building_confidence", "source", "geometry"]], paths.buildings)
         logging.getLogger(__name__).info(
-            "buildings: copied %d user-supplied footprints -> %s",
+            "buildings: copied %d user-supplied footprints -> %s(.geojson|.parquet)",
             len(gdf),
-            paths.buildings,
+            paths.buildings.with_suffix(""),
         )
         return 0
     if args.source == "osm":

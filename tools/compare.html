@@ -229,7 +229,7 @@
     <div class="field" style="grid-template-columns:1fr;">
       <button class="btn" id="layer-draw">Draw rectangle</button>
     </div>
-    <div class="layer-drop" data-drop-geojson>drop .geojson / .json files here</div>
+    <div class="layer-drop" data-drop-geojson>drop .geojson / .json / .parquet files here</div>
     <ul id="layers-list" style="list-style:none;padding:0;margin:14px 0 0;"></ul>
   </div>
 </aside>
@@ -355,8 +355,6 @@ function showHoverFootprint(bbox) {
   if (!bbox || bbox.length !== 4) return;
   hideHoverFootprint();
   const [w, s, e, n] = bbox;
-  // Force SVG for the hover / AOI vectors so they render crisp lines even though the map
-  // uses a canvas renderer for overlay-heavy geojson performance.
   state.hoverRect = L.rectangle([[s, w], [n, e]], {
     color: "#d73f3f", weight: 2, dashArray: "4 3", fill: false,
     interactive: false, renderer: L.svg(),
@@ -504,10 +502,6 @@ function looksLikeStac(j) {
 async function resolveSource(input) {
   const trimmed = (input || "").trim();
   if (!trimmed) throw new Error("empty");
-  // OpenAerialMap catalogue id (24-hex): fetch the catalogue record and use its COG url.
-  // OAM's single-item endpoint returns an empty stub for some records that ARE visible via
-  // the bbox listing, so fall back to a small-bbox search around the map centre and pick
-  // the record whose _id matches.
   if (OAM_ID_RE.test(trimmed)) {
     const r = await fetch(OAM_ONE(trimmed));
     if (r.ok) {
@@ -544,7 +538,6 @@ async function resolveSource(input) {
       }
     } catch (_) { /* fall through to raw treatment */ }
   }
-  // Localhost/LAN COGs go through the local serve.py rio-tiler XYZ endpoint, never the public titiler.
   if (/^https?:\/\/(127\.|localhost|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(trimmed)) {
     const base = new URL(trimmed);
     const tileUrl = `${base.protocol}//${base.host}/tiles/{z}/{x}/{y}?url=${encodeURIComponent(trimmed)}`;
@@ -826,10 +819,9 @@ function featureVisible(item, feature) {
 }
 
 function styleOverlay(item) {
-  // Light fill keeps the imagery readable; hidden features shortcut to a no-render style.
   const fallback = item.colour;
   const paintFor = (colour) => ({
-    color: colour, weight: 2.2, fillOpacity: 0.05, fillColor: colour,
+    stroke: true, fill: true, color: colour, weight: 2.2, fillOpacity: 0.05, fillColor: colour,
   });
   const styleFn = (feature) => {
     if (!featureVisible(item, feature)) return HIDDEN_STYLE;
@@ -840,7 +832,6 @@ function styleOverlay(item) {
   return {
     style: styleFn,
     pointToLayer: (feature, ll) => {
-      // Marker always exists; styleFn drives visibility so setStyle can re-show it later.
       const colour = item.styleBy
         ? (item.valueColours?.[feature?.properties?.[item.styleBy]] || fallback)
         : fallback;
@@ -852,10 +843,9 @@ function styleOverlay(item) {
   };
 }
 
-function addOverlayFromJson(name, geojson, colour, sourceUrl) {
+function addOverlayFromJson(name, geojson, colour, sourceUrl, extra = {}) {
   colour = colour || PALETTE[state.swatchIndex++ % PALETTE.length];
   const attrs = detectCategoricalAttrs(geojson);
-  // Auto-pick "damage" if present so xView2 layers colour on load; otherwise none by default.
   const autoStyleBy = attrs.find((a) => a.key === "damage")?.key || null;
   const item = {
     name, colour, visible: true,
@@ -864,6 +854,7 @@ function addOverlayFromJson(name, geojson, colour, sourceUrl) {
     styleBy: autoStyleBy,
     valueColours: null,
     hiddenValues: new Set(),
+    parquetUrl: extra.parquetUrl || null,
   };
   if (item.styleBy) {
     const values = attrs.find((a) => a.key === item.styleBy).values;
@@ -899,12 +890,80 @@ function addOverlayFromJson(name, geojson, colour, sourceUrl) {
 async function addOverlayFromUrl(url) {
   try {
     status(`Loading ${url}`, 0);
+    if (/\.parquet(\?|$)/i.test(url)) {
+      const fc = await queryParquet(url);
+      addOverlayFromJson(url.split("/").pop() || url, fc, null, url, {parquetUrl: url});
+      status(`Overlay added (${fc.features.length} rows)`);
+      return;
+    }
     const r = await fetch(url);
     if (!r.ok) throw new Error(`${r.status}`);
     const j = await r.json();
     addOverlayFromJson(url.split("/").pop() || url, j, null, url);
     status("Overlay added");
   } catch (exc) { status(`Overlay failed: ${exc.message}`, 3000, "err"); }
+}
+
+let _duckdb = null;
+async function ensureDuckDB() {
+  if (_duckdb) return _duckdb;
+  status("Loading DuckDB-WASM (~5 MB, first parquet only)", 0);
+  const duckdb = await import("https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm");
+  const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
+  const worker_url = URL.createObjectURL(
+    new Blob([`importScripts("${bundle.mainWorker}");`], {type: "text/javascript"}),
+  );
+  const worker = new Worker(worker_url);
+  const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), worker);
+  await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+  URL.revokeObjectURL(worker_url);
+  const conn = await db.connect();
+  await conn.query("INSTALL spatial;");
+  await conn.query("LOAD spatial;");
+  _duckdb = {db, conn};
+  return _duckdb;
+}
+
+/** Rebuild a parquet-backed overlay's L.geoJSON + cluster from a fresh DuckDB query
+ * whose WHERE clause reflects the current `hiddenValues` on `item.styleBy`. */
+async function reloadParquetLayer(item) {
+  if (!item.parquetUrl || !item.styleBy) return;
+  const kept = (item.attrs.find((a) => a.key === item.styleBy)?.values || [])
+    .filter((v) => !item.hiddenValues.has(String(v)));
+  const where = kept.length
+    ? `"${item.styleBy}" IN (${kept.map((v) => `'${String(v).replace(/'/g, "''")}'`).join(", ")})`
+    : "FALSE";
+  status(`Filtering ${item.name}`, 0);
+  const fc = await queryParquet(item.parquetUrl, where);
+  state.map.removeLayer(item.layer);
+  if (item.cluster) state.map.removeLayer(item.cluster);
+  item.layer = L.geoJSON(fc, styleOverlay(item));
+  item.cluster = fc.features.length > CLUSTER_MIN_FEATURES ? buildClusterLayer(item.name, fc) : null;
+  refreshClusterVisibility();
+  if (!item.cluster) item.layer.addTo(state.map);
+  status(`Filter: ${fc.features.length} rows`);
+  renderOverlays();
+}
+
+const PARQUET_INTERNAL_COLS = new Set(["geometry", "xmin", "ymin", "xmax", "ymax", "bbox"]);
+
+/** Run a spatial+attribute query against a remote/local parquet, return a GeoJSON FeatureCollection. */
+async function queryParquet(url, whereSql = "") {
+  const {conn} = await ensureDuckDB();
+  const cols = (await conn.query(`SELECT * FROM read_parquet('${url}') LIMIT 0`))
+    .schema.fields.map((f) => f.name).filter((n) => !PARQUET_INTERNAL_COLS.has(n));
+  const where = whereSql ? `WHERE ${whereSql}` : "";
+  const sql = `SELECT ${cols.map((c) => `"${c}"`).join(", ")}, ST_AsGeoJSON(geometry) AS __geom
+               FROM read_parquet('${url}') ${where}`;
+  const table = await conn.query(sql);
+  const rows = table.toArray();
+  const features = new Array(rows.length);
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const {__geom, ...props} = r.toJSON ? r.toJSON() : r;
+    features[i] = {type: "Feature", geometry: JSON.parse(__geom), properties: props};
+  }
+  return {type: "FeatureCollection", features};
 }
 
 function renderOverlays() {
@@ -966,7 +1025,6 @@ function renderOverlays() {
       };
       list.appendChild(styleRow);
 
-      // Each swatch is a checkbox toggling features of that value.
       if (item.styleBy && item.valueColours) {
         const legend = document.createElement("li");
         legend.style.cssText = "list-style:none;margin:2px 0 8px;padding:0 8px;display:flex;flex-wrap:wrap;gap:6px 10px;font-size:11px;color:var(--ink);";
@@ -979,9 +1037,13 @@ function renderOverlays() {
           cb.onchange = () => {
             if (cb.checked) item.hiddenValues.delete(String(v));
             else item.hiddenValues.add(String(v));
-            item.layer.setStyle(styleOverlay(item).style);
-            refreshHitTargets(item);
-            refreshClusterMembers(item);
+            if (item.parquetUrl) {
+              reloadParquetLayer(item);
+            } else {
+              item.layer.setStyle(styleOverlay(item).style);
+              refreshHitTargets(item);
+              refreshClusterMembers(item);
+            }
           };
           legend.appendChild(chip);
         });
@@ -1303,12 +1365,27 @@ function wireDropZones() {
   for (const el of document.querySelectorAll("[data-drop-geojson]")) {
     wireDrop(el, async (files) => {
       for (const file of files) {
-        if (!/\.(geo)?json$/i.test(file.name)) continue;
-        try { addOverlayFromJson(file.name, JSON.parse(await file.text())); }
-        catch (exc) { status(`GeoJSON parse: ${exc.message}`, 3000, "err"); }
+        try {
+          if (/\.parquet$/i.test(file.name)) {
+            status(`Loading ${file.name}`, 0);
+            await addOverlayFromLocalParquet(file);
+            status(`Overlay added: ${file.name}`);
+          } else if (/\.(geo)?json$/i.test(file.name)) {
+            addOverlayFromJson(file.name, JSON.parse(await file.text()));
+          }
+        } catch (exc) { status(`${file.name}: ${exc.message}`, 3000, "err"); }
       }
     });
   }
+}
+
+/** Register a dropped .parquet with DuckDB's virtual FS and query it like a URL. */
+async function addOverlayFromLocalParquet(file) {
+  const {db} = await ensureDuckDB();
+  const vname = `_dropped_${Date.now()}_${file.name}`;
+  await db.registerFileBuffer(vname, new Uint8Array(await file.arrayBuffer()));
+  const fc = await queryParquet(vname);
+  addOverlayFromJson(file.name, fc, null, null, {parquetUrl: vname});
 }
 function wireDrop(el, handler) {
   el.addEventListener("dragover", (e) => { e.preventDefault(); el.classList.add("hover"); });
@@ -1434,11 +1511,7 @@ async function applyUrlParams() {
       catch (exc) { status(`Inline layer: ${exc.message}`, 5000, "err"); }
       continue;
     }
-    try {
-      const r = await fetch(spec);
-      if (!r.ok) throw new Error(`${r.status}`);
-      addOverlayFromJson(spec.split("/").pop() || spec, await r.json(), null, spec);
-    } catch (exc) { status(`Layer ${spec}: ${exc.message}`, 5000, "err"); }
+    await addOverlayFromUrl(spec);
   }
   // Legacy compatibility: an old shared URL may still carry ?aoi=..., which we now treat
   // as just another layer.

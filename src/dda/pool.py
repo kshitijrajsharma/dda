@@ -43,8 +43,6 @@ def assign_damage(
     classes, labels, confs = [], [], []
 
     for geom in out.geometry:
-        # Mask within the footprint's pixel window only; per-building full-grid rasterisation
-        # does not scale to large scenes.
         minx, miny, maxx, maxy = geom.bounds
         c_tl, r_tl = inv * (minx, maxy)
         c_br, r_br = inv * (maxx, miny)

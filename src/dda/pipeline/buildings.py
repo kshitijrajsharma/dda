@@ -215,11 +215,16 @@ def run_fair_buildings(  # noqa: PLR0915  # single-purpose macroblock loop, spli
     ]
     for i, f in enumerate(final):
         f.setdefault("properties", {})["id"] = i
-    out_geojson.write_text(json.dumps({"type": "FeatureCollection", "features": final}))
+    import geopandas as gpd
+
+    from dda.pipeline.geowrite import write_dual
+
+    gdf_final = gpd.GeoDataFrame.from_features(final, crs="EPSG:4326")
+    write_dual(gdf_final, out_geojson)
     log.info(
-        "buildings: WROTE %d buildings -> %s (%ds)",
+        "buildings: WROTE %d buildings -> %s(.geojson|.parquet) (%ds)",
         len(final),
-        out_geojson,
+        out_geojson.with_suffix(""),
         int(time.time() - t0),
     )
     if block_tmp.exists():

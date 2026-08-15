@@ -17,6 +17,28 @@ log = logging.getLogger(__name__)
 TM_API = "https://tasking-manager-production-api.hotosm.org/api/v2"
 USER_AGENT = "dda-pipeline/0.1 (contact: krschap@duck.com)"
 
+_ESRI_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+_TM_IMAGERY_LABELS: dict[str, str] = {
+    "esri": _ESRI_URL,
+    "esri world imagery": _ESRI_URL,
+    "bing": _ESRI_URL,
+    "mapbox satellite": _ESRI_URL,
+    "maxar-premium": _ESRI_URL,
+    "maxar-standard": _ESRI_URL,
+}
+
+
+def _normalise_imagery(value: Any) -> str | None:
+    """Return an XYZ URL; TM labels are mapped, unknown non-URL strings become None."""
+    if not isinstance(value, str):
+        return None
+    v = value.strip()
+    if not v:
+        return None
+    if v.lower().startswith(("http://", "https://")):
+        return v
+    return _TM_IMAGERY_LABELS.get(v.lower())
+
 
 @dataclass(frozen=True)
 class TMProject:
@@ -46,9 +68,7 @@ def fetch_tm_project(project_id: int, timeout: int = 60) -> TMProject:
             "type": "FeatureCollection",
             "features": [{"type": "Feature", "geometry": aoi, "properties": {}}],
         }
-    imagery = payload.get("imagery")
-    if isinstance(imagery, str) and not imagery.strip():
-        imagery = None
+    imagery = _normalise_imagery(payload.get("imagery"))
 
     info = payload.get("projectInfo") or {}
     name = info.get("name") or f"tm-{project_id}"
