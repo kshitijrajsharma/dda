@@ -1,4 +1,4 @@
-"""Static files + `/oam-api/*` OAM proxy + `/tiles/{z}/{x}/{y}?url=` rio-tiler XYZ for compare.html."""
+"""Static files + `/oam-api/*` OAM proxy + `/tiles/{z}/{x}/{y}?url=` rio-tiler XYZ for tools/index.html."""
 
 from __future__ import annotations
 
@@ -115,7 +115,7 @@ def main() -> None:
     handler = lambda *a, **kw: Handler(*a, directory=str(args.root), **kw)  # noqa: E731
     with ReusableTCPServer(("127.0.0.1", args.port), handler) as server:
         print(f"serving {args.root} on http://127.0.0.1:{args.port}")
-        print(f"open   http://127.0.0.1:{args.port}/tools/compare.html")
+        print(f"open   http://127.0.0.1:{args.port}/tools/")
         server.serve_forever()
 
 
