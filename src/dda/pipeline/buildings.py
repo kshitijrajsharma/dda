@@ -218,8 +218,10 @@ def run_fair_buildings(  # noqa: PLR0915  # single-purpose macroblock loop, spli
     import geopandas as gpd
 
     from dda.pipeline.geowrite import write_dual
+    from dda.pipeline.regularise import regularise_footprints
 
     gdf_final = gpd.GeoDataFrame.from_features(final, crs="EPSG:4326")
+    gdf_final = regularise_footprints(gdf_final, raster_path=str(pre_aligned))
     write_dual(gdf_final, out_geojson)
     log.info(
         "buildings: WROTE %d buildings -> %s(.geojson|.parquet) (%ds)",

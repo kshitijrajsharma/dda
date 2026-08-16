@@ -33,8 +33,7 @@ dependencies = [
     "torchvision<=0.22.1",
 ]
 
-# Optional extras — `uv sync --extra archive` when you want to run the moved-aside
-# viz / agreement / compare / readme pipeline that lives under archive/.
+# `uv sync --extra archive` pulls the deps for archive/ viz + reporting scripts.
 [project.optional-dependencies]
 archive = [
     "aiohttp>=3.14.1",

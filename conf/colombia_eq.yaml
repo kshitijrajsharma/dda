@@ -33,5 +33,5 @@ damage:
   ckpt: null
 
 publish:
-  enabled: false
-  repo_id: null
+  enabled: true
+  repo_id: hotosm/colombia_eq_2026
