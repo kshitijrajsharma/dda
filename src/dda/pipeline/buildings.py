@@ -221,6 +221,9 @@ def run_fair_buildings(  # noqa: PLR0915  # single-purpose macroblock loop, spli
     from dda.pipeline.regularise import regularise_footprints
 
     gdf_final = gpd.GeoDataFrame.from_features(final, crs="EPSG:4326")
+    raw_out = out_geojson.with_name(out_geojson.stem + "_raw.geojson")
+    gdf_final.to_file(raw_out, driver="GeoJSON")
+    log.info("buildings: saved pre-regularise raw -> %s (%d polys)", raw_out, len(gdf_final))
     gdf_final = regularise_footprints(gdf_final, raster_path=str(pre_aligned))
     write_dual(gdf_final, out_geojson)
     log.info(

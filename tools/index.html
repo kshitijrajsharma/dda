@@ -918,6 +918,8 @@ async function ensureDuckDB() {
   await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
   URL.revokeObjectURL(worker_url);
   const conn = await db.connect();
+  await conn.query("INSTALL httpfs;");
+  await conn.query("LOAD httpfs;");
   await conn.query("INSTALL spatial;");
   await conn.query("LOAD spatial;");
   _duckdb = {db, conn};
