@@ -1309,6 +1309,7 @@ function writeShareUrl() {
     const s = state[side];
     if (!s) continue;
     if (s.cogUrl) params.set(side, s.cogUrl);
+    else if (s.tileUrl) params.set(side, s.tileUrl);
     else skipped.push(`${side} (local file: ${s.title || "unknown"})`);
   }
 
